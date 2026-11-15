@@ -12,6 +12,7 @@ function BroadcastGrid({ items }: { items: Broadcast[] }) {
         <li key={b.id}>
           <Link to={`/broadcasts/${b.id}`} className="card">
             <div className="card-title">{b.title}</div>
+            {b.ownerNickname && <div className="card-owner">{b.ownerNickname}</div>}
             <div className="card-meta">
               <StatusBadge status={b.status} />
               <TypeBadge type={b.type} />

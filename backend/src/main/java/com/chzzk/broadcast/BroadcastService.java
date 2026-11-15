@@ -1,8 +1,11 @@
 package com.chzzk.broadcast;
 
+import com.chzzk.auth.User;
+import com.chzzk.auth.UserRepository;
 import com.chzzk.common.ForbiddenException;
 import com.chzzk.common.InvalidRequestException;
 import com.chzzk.common.NotFoundException;
+import com.chzzk.common.UnauthorizedException;
 import com.chzzk.storage.StoredVideo;
 import com.chzzk.storage.VideoNotFoundException;
 import com.chzzk.storage.VideoStorage;
@@ -31,28 +34,32 @@ public class BroadcastService {
     private final BroadcastRepository repository;
     private final VideoStorage storage;
     private final ApplicationEventPublisher events;
+    private final UserRepository users;
 
-    public BroadcastService(BroadcastRepository repository, VideoStorage storage, ApplicationEventPublisher events) {
+    public BroadcastService(BroadcastRepository repository, VideoStorage storage, ApplicationEventPublisher events,
+                            UserRepository users) {
+        this.users = users;
         this.repository = repository;
         this.storage = storage;
         this.events = events;
     }
 
-    /** Registers a recorded broadcast from exactly one of: an uploaded file or an external URL. */
-    public Broadcast registerRecorded(String title, MultipartFile file, String videoUrl) {
+    /** Registers a recorded broadcast (owned by the given user) from exactly one of: an uploaded file or an external URL. */
+    public Broadcast registerRecorded(long userId, String title, MultipartFile file, String videoUrl) {
         String cleanTitle = validateTitle(title);
+        User owner = owner(userId);
         boolean hasFile = file != null && !file.isEmpty();
         boolean hasUrl = videoUrl != null && !videoUrl.isBlank();
         if (hasFile == hasUrl) {
             throw new InvalidRequestException("영상 파일 또는 영상 URL 중 하나만 입력해야 합니다.");
         }
         if (hasUrl) {
-            return repository.save(Broadcast.recordedFromUrl(cleanTitle, validateUrl(videoUrl.trim())));
+            return repository.save(Broadcast.recordedFromUrl(owner, cleanTitle, validateUrl(videoUrl.trim())));
         }
-        return registerFile(cleanTitle, file);
+        return registerFile(owner, cleanTitle, file);
     }
 
-    private Broadcast registerFile(String title, MultipartFile file) {
+    private Broadcast registerFile(User owner, String title, MultipartFile file) {
         String contentType = file.getContentType();
         if (contentType == null || !contentType.toLowerCase().startsWith("video/")) {
             throw new InvalidRequestException("video/* 형식의 영상 파일만 업로드할 수 있습니다.");
@@ -65,32 +72,24 @@ public class BroadcastService {
         }
         try {
             return repository.save(Broadcast.recordedFromFile(
-                    title, stored.storedName(), stored.originalName(), stored.contentType(), stored.sizeBytes()));
+                    owner, title, stored.storedName(), stored.originalName(), stored.contentType(), stored.sizeBytes()));
         } catch (RuntimeException e) {
             storage.delete(stored.storedName()); // do not leave an orphan file if the DB write fails
             throw e;
         }
     }
 
-    /** A freshly created live broadcast together with its one-time plain-text broadcaster key. */
-    public record CreatedLive(Broadcast broadcast, String broadcasterKey) {
+    /** Creates a READY live broadcast owned by the user; it becomes LIVE when its owner connects to the signaling socket. */
+    public Broadcast createLive(long userId, String title) {
+        return repository.save(Broadcast.live(owner(userId), validateTitle(title)));
     }
 
-    /** Creates a READY live broadcast; it becomes LIVE when the broadcaster connects to the signaling socket. */
-    public CreatedLive createLive(String title) {
-        String key = BroadcasterKeys.generate();
-        Broadcast saved = repository.save(Broadcast.live(validateTitle(title), BroadcasterKeys.hash(key)));
-        return new CreatedLive(saved, key);
-    }
-
-    /** Loads a live broadcast and checks the broadcaster key (403 on mismatch). */
+    /** Loads a live broadcast and checks that the user owns it (403 otherwise). Used by the REST end and the signaling join. */
     @Transactional(readOnly = true)
-    public Broadcast authenticateBroadcaster(long id, String broadcasterKey) {
+    public Broadcast authorizeBroadcaster(long id, long userId) {
         Broadcast b = get(id);
         requireLive(b);
-        if (!BroadcasterKeys.matches(broadcasterKey, b.getBroadcasterKeyHash())) {
-            throw new ForbiddenException("방송자 키가 올바르지 않습니다.");
-        }
+        requireOwner(b, userId);
         return b;
     }
 
@@ -104,13 +103,50 @@ public class BroadcastService {
         return repository.save(b);
     }
 
-    /** Ends a live broadcast on the broadcaster's request (key required). Idempotent. */
-    public Broadcast endLive(long id, String broadcasterKey) {
-        authenticateBroadcaster(id, broadcasterKey);
+    /** Ends a live broadcast on its owner's request. Idempotent. */
+    public Broadcast endLive(long id, long userId) {
+        authorizeBroadcaster(id, userId);
         return endInternal(id);
     }
 
-    /** Ends a live broadcast without a key: used by the server itself (grace period expired, restart cleanup). */
+    /** Changes the title; owner only. */
+    @Transactional
+    public Broadcast rename(long id, long userId, String title) {
+        Broadcast b = get(id);
+        requireOwner(b, userId);
+        b.rename(validateTitle(title));
+        return repository.save(b);
+    }
+
+    /**
+     * Deletes a broadcast, its comments (ON DELETE CASCADE) and its stored video file; owner only. A broadcast that
+     * is still READY/LIVE is ended first so connected viewers get "broadcast-ended" instead of a dead stream.
+     */
+    public void delete(long id, long userId) {
+        Broadcast b = get(id);
+        requireOwner(b, userId);
+        if (b.isLiveType() && b.getStatus() != BroadcastStatus.ENDED) {
+            endInternal(id);
+        }
+        repository.deleteById(id);
+        if (b.isStoredFile()) {
+            storage.delete(b.getStoredFileName()); // after the row is gone: a failed DB delete must not lose the video
+        }
+    }
+
+    private User owner(long userId) {
+        return users.findById(userId).orElseThrow(() -> new UnauthorizedException("존재하지 않는 사용자입니다."));
+    }
+
+    /** Ownerless rows (created before step 3) belong to nobody, so nobody passes. */
+    static void requireOwner(Broadcast b, long userId) {
+        Long ownerId = b.getOwnerId();
+        if (ownerId == null || ownerId != userId) {
+            throw new ForbiddenException("방송 소유자만 할 수 있습니다.");
+        }
+    }
+
+    /** Ends a live broadcast without an owner check: used by the server itself (grace period expired, restart cleanup). */
     public Broadcast endBySystem(long id) {
         return endInternal(id);
     }

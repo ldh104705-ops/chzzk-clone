@@ -4,10 +4,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.awaitility.Awaitility.await;
 
+import com.chzzk.TestUsers;
 import com.chzzk.TestcontainersConfiguration;
 import com.chzzk.broadcast.BroadcastRepository;
 import com.chzzk.broadcast.BroadcastService;
-import com.chzzk.broadcast.BroadcastService.CreatedLive;
+import com.chzzk.broadcast.Broadcast;
 import com.chzzk.broadcast.BroadcastStatus;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -51,11 +52,17 @@ class LiveSignalingTest {
     @Autowired
     BroadcastRepository repository;
 
+    @Autowired
+    TestUsers users;
+
+    private TestUsers.Account owner;
+
     private final List<Client> clients = new ArrayList<>();
 
     @BeforeEach
     void clean() {
         repository.deleteAll();
+        owner = users.register("owner");
     }
 
     @AfterEach
@@ -131,9 +138,9 @@ class LiveSignalingTest {
         return client;
     }
 
-    private Client joinBroadcaster(long id, String key) throws Exception {
+    private Client joinBroadcaster(long id, String token) throws Exception {
         Client c = connect(id);
-        c.send("{\"type\":\"join\",\"role\":\"broadcaster\",\"broadcasterKey\":\"" + key + "\"}");
+        c.send("{\"type\":\"join\",\"role\":\"broadcaster\",\"token\":\"" + token + "\"}");
         JsonNode joined = c.expect("joined");
         assertThat(joined.get("peerId").asString()).isEqualTo("broadcaster");
         return c;
@@ -156,11 +163,11 @@ class LiveSignalingTest {
 
     @Test
     void broadcasterJoinMakesTheBroadcastLiveAndViewerJoinIsAnnounced() throws Exception {
-        CreatedLive live = service.createLive("시그널링");
-        long id = live.broadcast().getId();
+        Broadcast live = service.createLive(owner.id(), "시그널링");
+        long id = live.getId();
         assertThat(statusOf(id)).isEqualTo(BroadcastStatus.READY);
 
-        Client broadcaster = joinBroadcaster(id, live.broadcasterKey());
+        Client broadcaster = joinBroadcaster(id, owner.token());
         assertThat(statusOf(id)).isEqualTo(BroadcastStatus.LIVE);
         assertThat(repository.findById(id).orElseThrow().getStartedAt()).isNotNull();
 
@@ -179,9 +186,9 @@ class LiveSignalingTest {
 
     @Test
     void relaysOfferAnswerAndIceToTheRightPeerOnly() throws Exception {
-        CreatedLive live = service.createLive("릴레이");
-        long id = live.broadcast().getId();
-        Client broadcaster = joinBroadcaster(id, live.broadcasterKey());
+        Broadcast live = service.createLive(owner.id(), "릴레이");
+        long id = live.getId();
+        Client broadcaster = joinBroadcaster(id, owner.token());
         Client viewerA = joinViewer(id);
         String idA = viewerIdOf(broadcaster.expect("viewer-joined"));
         Client viewerB = joinViewer(id);
@@ -217,9 +224,9 @@ class LiveSignalingTest {
 
     @Test
     void rejectsInvalidMessages() throws Exception {
-        CreatedLive live = service.createLive("검증");
-        long id = live.broadcast().getId();
-        Client broadcaster = joinBroadcaster(id, live.broadcasterKey());
+        Broadcast live = service.createLive(owner.id(), "검증");
+        long id = live.getId();
+        Client broadcaster = joinBroadcaster(id, owner.token());
         Client viewer = joinViewer(id);
         broadcaster.expect("viewer-joined");
 
@@ -242,27 +249,37 @@ class LiveSignalingTest {
     }
 
     @Test
-    void rejectsWrongOrMissingBroadcasterKey() throws Exception {
-        CreatedLive live = service.createLive("키");
-        long id = live.broadcast().getId();
+    void onlyTheOwnerCanJoinAsBroadcaster() throws Exception {
+        Broadcast live = service.createLive(owner.id(), "소유자");
+        long id = live.getId();
+        TestUsers.Account other = users.register("other");
 
-        Client wrong = connect(id);
-        wrong.send("{\"type\":\"join\",\"role\":\"broadcaster\",\"broadcasterKey\":\"not-the-key\"}");
-        assertThat(wrong.expect("error").get("code").asString()).isEqualTo("FORBIDDEN");
-        wrong.awaitClosed();
+        Client garbage = connect(id);
+        garbage.send("{\"type\":\"join\",\"role\":\"broadcaster\",\"token\":\"not-a-jwt\"}");
+        assertThat(garbage.expect("error").get("code").asString()).isEqualTo("UNAUTHORIZED");
+        garbage.awaitClosed();
 
         Client missing = connect(id);
         missing.send("{\"type\":\"join\",\"role\":\"broadcaster\"}");
-        assertThat(missing.expect("error").get("code").asString()).isEqualTo("FORBIDDEN");
+        assertThat(missing.expect("error").get("code").asString()).isEqualTo("UNAUTHORIZED");
         missing.awaitClosed();
 
+        Client stranger = connect(id); // a valid login, but not the owner
+        stranger.send("{\"type\":\"join\",\"role\":\"broadcaster\",\"token\":\"" + other.token() + "\"}");
+        assertThat(stranger.expect("error").get("code").asString()).isEqualTo("FORBIDDEN");
+        stranger.awaitClosed();
+
         assertThat(statusOf(id)).isEqualTo(BroadcastStatus.READY); // a failed attempt must not start the broadcast
+
+        Client ownerClient = joinBroadcaster(id, owner.token()); // the owner is accepted
+        assertThat(statusOf(id)).isEqualTo(BroadcastStatus.LIVE);
+        ownerClient.expectNothing();
     }
 
     @Test
     void viewerCannotJoinABroadcastThatIsNotLive() throws Exception {
-        CreatedLive live = service.createLive("종료됨");
-        long id = live.broadcast().getId();
+        Broadcast live = service.createLive(owner.id(), "종료됨");
+        long id = live.getId();
 
         Client early = connect(id); // still READY: nobody is streaming yet
         early.send("{\"type\":\"join\",\"role\":\"viewer\"}");
@@ -270,15 +287,15 @@ class LiveSignalingTest {
         early.awaitClosed();
 
         service.markLive(id);
-        service.endLive(id, live.broadcasterKey());
+        service.endLive(id, owner.id());
         Client late = connect(id);
         late.send("{\"type\":\"join\",\"role\":\"viewer\"}");
         assertThat(late.expect("error").get("code").asString()).isEqualTo("BROADCAST_ENDED");
         late.awaitClosed();
 
-        // An ended broadcast cannot be restarted with the (valid) key either.
+        // An ended broadcast cannot be restarted with the owner token either.
         Client revived = connect(id);
-        revived.send("{\"type\":\"join\",\"role\":\"broadcaster\",\"broadcasterKey\":\"" + live.broadcasterKey() + "\"}");
+        revived.send("{\"type\":\"join\",\"role\":\"broadcaster\",\"token\":\"" + owner.token() + "\"}");
         assertThat(revived.expect("error").get("code").asString()).isEqualTo("BROADCAST_ENDED");
         assertThat(statusOf(id)).isEqualTo(BroadcastStatus.ENDED);
 
@@ -289,13 +306,13 @@ class LiveSignalingTest {
 
     @Test
     void endingThroughTheServiceNotifiesAndDisconnectsEveryone() throws Exception {
-        CreatedLive live = service.createLive("종료 알림");
-        long id = live.broadcast().getId();
-        Client broadcaster = joinBroadcaster(id, live.broadcasterKey());
+        Broadcast live = service.createLive(owner.id(), "종료 알림");
+        long id = live.getId();
+        Client broadcaster = joinBroadcaster(id, owner.token());
         Client viewer = joinViewer(id);
         broadcaster.expect("viewer-joined");
 
-        service.endLive(id, live.broadcasterKey()); // same code path as POST /api/broadcasts/{id}/end
+        service.endLive(id, owner.id()); // same code path as POST /api/broadcasts/{id}/end
 
         viewer.expect("broadcast-ended");
         broadcaster.expect("broadcast-ended");
@@ -306,9 +323,9 @@ class LiveSignalingTest {
 
     @Test
     void broadcasterDisconnectEndsTheBroadcastAfterTheGracePeriod() throws Exception {
-        CreatedLive live = service.createLive("끊김");
-        long id = live.broadcast().getId();
-        Client broadcaster = joinBroadcaster(id, live.broadcasterKey());
+        Broadcast live = service.createLive(owner.id(), "끊김");
+        long id = live.getId();
+        Client broadcaster = joinBroadcaster(id, owner.token());
         Client viewer = joinViewer(id);
         broadcaster.expect("viewer-joined");
 
@@ -324,16 +341,16 @@ class LiveSignalingTest {
 
     @Test
     void broadcasterReconnectingWithinGraceKeepsTheBroadcastAndRenegotiatesWithViewers() throws Exception {
-        CreatedLive live = service.createLive("재접속");
-        long id = live.broadcast().getId();
-        Client first = joinBroadcaster(id, live.broadcasterKey());
+        Broadcast live = service.createLive(owner.id(), "재접속");
+        long id = live.getId();
+        Client first = joinBroadcaster(id, owner.token());
         Client viewer = joinViewer(id);
         String viewerId = viewerIdOf(first.expect("viewer-joined"));
 
         first.closeQuietly();
         first.awaitClosed();
         Client second = connect(id);
-        second.send("{\"type\":\"join\",\"role\":\"broadcaster\",\"broadcasterKey\":\"" + live.broadcasterKey() + "\"}");
+        second.send("{\"type\":\"join\",\"role\":\"broadcaster\",\"token\":\"" + owner.token() + "\"}");
         second.expect("joined");
         assertThat(viewerIdOf(second.expect("viewer-joined"))).isEqualTo(viewerId); // viewer is re-announced
 
@@ -347,8 +364,8 @@ class LiveSignalingTest {
 
     @Test
     void rejectsWebSocketHandshakeFromDisallowedOrigin() {
-        CreatedLive live = service.createLive("오리진");
-        long id = live.broadcast().getId();
+        Broadcast live = service.createLive(owner.id(), "오리진");
+        long id = live.getId();
         WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
         headers.setOrigin("http://evil.example.com");
 

@@ -4,7 +4,7 @@ import com.chzzk.broadcast.Broadcast;
 import com.chzzk.broadcast.BroadcastEndedEvent;
 import com.chzzk.broadcast.BroadcastService;
 import com.chzzk.broadcast.BroadcastStatus;
-import com.chzzk.broadcast.BroadcasterKeys;
+import com.chzzk.common.ForbiddenException;
 import com.chzzk.common.NotFoundException;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.annotation.PreDestroy;
@@ -19,6 +19,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.event.EventListener;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.security.oauth2.jwt.JwtException;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
@@ -34,7 +36,7 @@ import tools.jackson.databind.ObjectMapper;
  *
  * <p>Client to server (JSON, field {@code type}):
  * <ul>
- *   <li>{@code join}: {@code {role: "broadcaster", broadcasterKey}} or {@code {role: "viewer"}}</li>
+ *   <li>{@code join}: {@code {role: "broadcaster", token} (token = the owner's login JWT)} or {@code {role: "viewer"}}</li>
  *   <li>{@code offer} / {@code answer}: {@code {to?, sdp}}; {@code ice-candidate}: {@code {to?, candidate}}.
  *       The broadcaster must set {@code to} (a viewerId); a viewer's messages always go to the broadcaster.</li>
  *   <li>{@code ping}: keep-alive for proxies that close idle sockets</li>
@@ -55,10 +57,11 @@ public class LiveSignalingHandler extends TextWebSocketHandler {
 
     /** Incoming message. Unknown fields are ignored; SDP and candidate stay raw JSON because we only relay them. */
     @JsonIgnoreProperties(ignoreUnknown = true)
-    record Inbound(String type, String role, String broadcasterKey, String to, JsonNode sdp, JsonNode candidate) {
+    record Inbound(String type, String role, String token, String to, JsonNode sdp, JsonNode candidate) {
     }
 
     private final BroadcastService broadcasts;
+    private final JwtDecoder jwtDecoder;
     private final ObjectMapper mapper;
     private final long graceSeconds;
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -70,9 +73,10 @@ public class LiveSignalingHandler extends TextWebSocketHandler {
     private final Map<String, Peer> peers = new ConcurrentHashMap<>();   // by WebSocket session id
     private final Map<Long, LiveRoom> rooms = new ConcurrentHashMap<>(); // by broadcast id
 
-    public LiveSignalingHandler(BroadcastService broadcasts, ObjectMapper mapper,
+    public LiveSignalingHandler(BroadcastService broadcasts, JwtDecoder jwtDecoder, ObjectMapper mapper,
                                 @Value("${app.live.broadcaster-grace-seconds:15}") long graceSeconds) {
         this.broadcasts = broadcasts;
+        this.jwtDecoder = jwtDecoder;
         this.mapper = mapper;
         this.graceSeconds = graceSeconds;
     }
@@ -168,7 +172,7 @@ public class LiveSignalingHandler extends TextWebSocketHandler {
             return;
         }
         if ("broadcaster".equals(in.role())) {
-            joinBroadcaster(peer, broadcast, in.broadcasterKey());
+            joinBroadcaster(peer, broadcast, in.token());
         } else if ("viewer".equals(in.role())) {
             joinViewer(peer, broadcast);
         } else {
@@ -176,10 +180,27 @@ public class LiveSignalingHandler extends TextWebSocketHandler {
         }
     }
 
-    private void joinBroadcaster(Peer peer, Broadcast broadcast, String key) {
+    /**
+     * Only the broadcast's owner may stream: the join message carries the login JWT ({@code token}). It is checked
+     * once, at join time, and never logged. A missing/invalid/expired/logged-out token is UNAUTHORIZED, a valid token
+     * of somebody else is FORBIDDEN.
+     */
+    private void joinBroadcaster(Peer peer, Broadcast broadcast, String token) {
         long id = broadcast.getId();
-        if (!BroadcasterKeys.matches(key, broadcast.getBroadcasterKeyHash())) {
-            fail(peer, "FORBIDDEN", "방송자 키가 올바르지 않습니다.");
+        long userId;
+        try {
+            if (token == null || token.isBlank()) {
+                throw new JwtException("missing token");
+            }
+            userId = Long.parseLong(jwtDecoder.decode(token).getSubject());
+        } catch (JwtException | NumberFormatException e) {
+            fail(peer, "UNAUTHORIZED", "로그인이 필요하거나 토큰이 올바르지 않습니다.");
+            return;
+        }
+        try {
+            broadcasts.authorizeBroadcaster(id, userId);
+        } catch (ForbiddenException e) {
+            fail(peer, "FORBIDDEN", "방송 소유자만 송출할 수 있습니다.");
             return;
         }
         if (broadcasts.markLive(id).getStatus() == BroadcastStatus.ENDED) { // READY -> LIVE, or reconnect while LIVE

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isHttpUrl, validateRecordedForm } from './validation'
+import { isHttpUrl, validateRecordedForm, validateSignupForm } from './validation'
 
 const video = { type: 'video/mp4' }
 
@@ -31,5 +31,22 @@ describe('validateRecordedForm', () => {
     expect(validateRecordedForm({ title: 't', mode: 'url', file: null, videoUrl: '' }).videoUrl).toBeDefined()
     expect(validateRecordedForm({ title: 't', mode: 'url', file: null, videoUrl: 'ftp://x/y' }).videoUrl).toBeDefined()
     expect(validateRecordedForm({ title: 't', mode: 'url', file: null, videoUrl: 'https://example.com/a.mp4' })).toEqual({})
+  })
+})
+
+describe('validateSignupForm', () => {
+  it('accepts a valid form', () => {
+    expect(validateSignupForm({ username: 'Alice_1', password: 'correct-horse-1', nickname: '앨리스' })).toEqual({})
+  })
+
+  it('reports each invalid field', () => {
+    const errors = validateSignupForm({ username: 'a!', password: 'short', nickname: '   ' })
+    expect(Object.keys(errors).sort()).toEqual(['nickname', 'password', 'username'])
+  })
+
+  it('rejects passwords beyond the 72 bytes BCrypt can use and over-long nicknames', () => {
+    expect(validateSignupForm({ username: 'alice', password: '가'.repeat(25), nickname: 'a' }).password).toBeDefined()
+    expect(validateSignupForm({ username: 'alice', password: 'x'.repeat(72), nickname: 'a' }).password).toBeUndefined()
+    expect(validateSignupForm({ username: 'alice', password: 'x'.repeat(8), nickname: 'n'.repeat(21) }).nickname).toBeDefined()
   })
 })

@@ -9,12 +9,11 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.chzzk.TestUsers;
 import com.chzzk.TestcontainersConfiguration;
-import com.chzzk.broadcast.Broadcast;
 import com.chzzk.broadcast.BroadcastRepository;
 import com.chzzk.broadcast.BroadcastService;
 import com.chzzk.broadcast.BroadcastStatus;
-import com.chzzk.broadcast.BroadcasterKeys;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -27,13 +26,12 @@ import org.springframework.test.web.servlet.MvcResult;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
-/** REST side of step 2: create/end live broadcasts, broadcaster key checks, status filtering, ICE servers. */
+/** REST side of the live feature: create/end live broadcasts as their owner, status filtering, ICE servers. */
 @SpringBootTest
 @AutoConfigureMockMvc
 @Import(TestcontainersConfiguration.class)
 class LiveBroadcastApiTest {
 
-    private static final String KEY_HEADER = "X-Broadcaster-Key";
     private final JsonMapper json = JsonMapper.builder().build();
 
     @Autowired
@@ -45,13 +43,20 @@ class LiveBroadcastApiTest {
     @Autowired
     BroadcastService service;
 
+    @Autowired
+    TestUsers users;
+
+    TestUsers.Account owner;
+
     @BeforeEach
     void clean() {
         repository.deleteAll();
+        owner = users.register("owner");
     }
 
     private JsonNode createLive(String title) throws Exception {
         MvcResult result = mvc.perform(post("/api/broadcasts/live")
+                        .header("Authorization", owner.bearer())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"title\":\"" + title + "\"}"))
                 .andExpect(status().isCreated())
@@ -60,97 +65,74 @@ class LiveBroadcastApiTest {
     }
 
     @Test
-    void createsReadyLiveBroadcastAndReturnsKeyOnce() throws Exception {
-        mvc.perform(post("/api/broadcasts/live").contentType(MediaType.APPLICATION_JSON).content("{\"title\":\"  내 라이브  \"}"))
+    void createsReadyLiveBroadcastOwnedByTheCaller() throws Exception {
+        mvc.perform(post("/api/broadcasts/live").header("Authorization", owner.bearer())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"title\":\"  내 라이브  \"}"))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.broadcast.title").value("내 라이브"))
-                .andExpect(jsonPath("$.broadcast.type").value("LIVE"))
-                .andExpect(jsonPath("$.broadcast.status").value("READY"))
-                .andExpect(jsonPath("$.broadcast.sourceType").value("LIVE"))
-                .andExpect(jsonPath("$.broadcast.playbackUrl").value(nullValue()))
-                .andExpect(jsonPath("$.broadcasterKey").isNotEmpty());
-    }
-
-    @Test
-    void storesOnlyAHashOfTheKey() throws Exception {
-        JsonNode created = createLive("해시");
-        String key = created.get("broadcasterKey").asString();
-        Broadcast saved = repository.findAll().getFirst();
-
-        assertThat(saved.getBroadcasterKeyHash()).isNotEqualTo(key).isEqualTo(BroadcasterKeys.hash(key)).hasSize(64);
-        // The key must not leak through the normal read APIs.
-        mvc.perform(get("/api/broadcasts/{id}", saved.getId()))
-                .andExpect(jsonPath("$.broadcasterKey").doesNotExist())
-                .andExpect(jsonPath("$.broadcasterKeyHash").doesNotExist());
+                .andExpect(jsonPath("$.title").value("내 라이브"))
+                .andExpect(jsonPath("$.type").value("LIVE"))
+                .andExpect(jsonPath("$.status").value("READY"))
+                .andExpect(jsonPath("$.sourceType").value("LIVE"))
+                .andExpect(jsonPath("$.playbackUrl").value(nullValue()))
+                .andExpect(jsonPath("$.ownerId").value(owner.id()))
+                .andExpect(jsonPath("$.broadcasterKey").doesNotExist());
     }
 
     @Test
     void rejectsMissingTitleAndBody() throws Exception {
-        mvc.perform(post("/api/broadcasts/live").contentType(MediaType.APPLICATION_JSON).content("{}"))
+        String auth = owner.bearer();
+        mvc.perform(post("/api/broadcasts/live").header("Authorization", auth)
+                        .contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().isBadRequest());
-        mvc.perform(post("/api/broadcasts/live").contentType(MediaType.APPLICATION_JSON).content("{\"title\":\"   \"}"))
+        mvc.perform(post("/api/broadcasts/live").header("Authorization", auth)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"title\":\"   \"}"))
                 .andExpect(status().isBadRequest());
-        mvc.perform(post("/api/broadcasts/live").contentType(MediaType.APPLICATION_JSON))
+        mvc.perform(post("/api/broadcasts/live").header("Authorization", auth).contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isBadRequest());
         assertThat(repository.count()).isZero();
     }
 
     @Test
-    void endsWithCorrectKeyAndIsIdempotent() throws Exception {
-        JsonNode created = createLive("종료 테스트");
-        long id = created.get("broadcast").get("id").asLong();
-        String key = created.get("broadcasterKey").asString();
+    void ownerEndsTheBroadcastAndEndingIsIdempotent() throws Exception {
+        long id = createLive("종료 테스트").get("id").asLong();
         service.markLive(id);
 
-        mvc.perform(post("/api/broadcasts/{id}/end", id).header(KEY_HEADER, key))
+        mvc.perform(post("/api/broadcasts/{id}/end", id).header("Authorization", owner.bearer()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("ENDED"))
                 .andExpect(jsonPath("$.endedAt").isNotEmpty());
-        mvc.perform(post("/api/broadcasts/{id}/end", id).header(KEY_HEADER, key))
+        mvc.perform(post("/api/broadcasts/{id}/end", id).header("Authorization", owner.bearer()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("ENDED"));
         assertThat(repository.findById(id).orElseThrow().getStatus()).isEqualTo(BroadcastStatus.ENDED);
     }
 
     @Test
-    void endWithWrongOrMissingKeyIsForbiddenAndKeepsBroadcastLive() throws Exception {
-        JsonNode created = createLive("보호");
-        long id = created.get("broadcast").get("id").asLong();
-        service.markLive(id);
-
-        mvc.perform(post("/api/broadcasts/{id}/end", id).header(KEY_HEADER, "wrong-key"))
-                .andExpect(status().isForbidden())
-                .andExpect(jsonPath("$.status").value(403));
-        mvc.perform(post("/api/broadcasts/{id}/end", id))
-                .andExpect(status().isForbidden());
-        assertThat(repository.findById(id).orElseThrow().getStatus()).isEqualTo(BroadcastStatus.LIVE);
-    }
-
-    @Test
     void endOfUnknownOrRecordedBroadcastFails() throws Exception {
-        mvc.perform(post("/api/broadcasts/{id}/end", 987654).header(KEY_HEADER, "k"))
+        String auth = owner.bearer();
+        mvc.perform(post("/api/broadcasts/{id}/end", 987654).header("Authorization", auth))
                 .andExpect(status().isNotFound());
 
-        mvc.perform(multipart("/api/broadcasts/recorded").param("title", "녹화").param("videoUrl", "https://example.com/a.mp4"))
+        mvc.perform(multipart("/api/broadcasts/recorded").header("Authorization", auth)
+                        .param("title", "녹화").param("videoUrl", "https://example.com/a.mp4"))
                 .andExpect(status().isCreated());
         long recordedId = repository.findAll().getFirst().getId();
-        mvc.perform(post("/api/broadcasts/{id}/end", recordedId).header(KEY_HEADER, "k"))
+        mvc.perform(post("/api/broadcasts/{id}/end", recordedId).header("Authorization", auth))
                 .andExpect(status().isBadRequest());
-        mvc.perform(get("/api/broadcasts/{id}/video", createLive("라이브").get("broadcast").get("id").asLong()))
+        mvc.perform(get("/api/broadcasts/{id}/video", createLive("라이브").get("id").asLong()))
                 .andExpect(status().isNotFound());
     }
 
     @Test
     void filtersByTypeAndStatusAndShowsLiveFirst() throws Exception {
-        mvc.perform(multipart("/api/broadcasts/recorded").param("title", "녹화A").param("videoUrl", "https://example.com/a.mp4"))
+        mvc.perform(multipart("/api/broadcasts/recorded").header("Authorization", owner.bearer())
+                        .param("title", "녹화A").param("videoUrl", "https://example.com/a.mp4"))
                 .andExpect(status().isCreated());
-        JsonNode live = createLive("라이브B");
-        long liveId = live.get("broadcast").get("id").asLong();
+        long liveId = createLive("라이브B").get("id").asLong();
         service.markLive(liveId);
-        JsonNode ended = createLive("끝난라이브C");
-        long endedId = ended.get("broadcast").get("id").asLong();
+        long endedId = createLive("끝난라이브C").get("id").asLong();
         service.markLive(endedId);
-        service.endLive(endedId, ended.get("broadcasterKey").asString());
+        service.endLive(endedId, owner.id());
         createLive("준비중D"); // READY: created but never started
 
         // Default list: READY hidden; the LIVE one comes first even though a newer ENDED one exists.
@@ -177,7 +159,7 @@ class LiveBroadcastApiTest {
 
     @Test
     void endsOrphanedLiveBroadcastsOnStartupCleanup() throws Exception {
-        long liveId = createLive("고아").get("broadcast").get("id").asLong();
+        long liveId = createLive("고아").get("id").asLong();
         service.markLive(liveId);
 
         assertThat(service.endOrphanedLive()).isEqualTo(1);

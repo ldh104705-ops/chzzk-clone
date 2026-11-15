@@ -1,12 +1,16 @@
 package com.chzzk.broadcast;
 
+import com.chzzk.auth.User;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
+import jakarta.persistence.FetchType;
 import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import java.time.Instant;
 
@@ -54,23 +58,25 @@ public class Broadcast {
     @Column(name = "ended_at")
     private Instant endedAt;
 
-    /** SHA-256 hex of the broadcaster key (LIVE broadcasts only). Never exposed through the API. */
-    @Column(name = "broadcaster_key_hash", length = 64)
-    private String broadcasterKeyHash;
+    /** Who created (and may manage) this broadcast. Null only for rows created before step 3. */
+    @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "owner_id")
+    private User owner;
 
     protected Broadcast() {
     }
 
-    private Broadcast(String title) {
+    private Broadcast(User owner, String title) {
+        this.owner = owner;
         this.title = title;
         this.type = BroadcastType.RECORDED;
         this.status = BroadcastStatus.ENDED;
         this.createdAt = Instant.now();
     }
 
-    public static Broadcast recordedFromFile(String title, String storedFileName, String originalFileName,
+    public static Broadcast recordedFromFile(User owner, String title, String storedFileName, String originalFileName,
                                              String contentType, long sizeBytes) {
-        Broadcast b = new Broadcast(title);
+        Broadcast b = new Broadcast(owner, title);
         b.storedFileName = storedFileName;
         b.originalFileName = originalFileName;
         b.contentType = contentType;
@@ -78,19 +84,22 @@ public class Broadcast {
         return b;
     }
 
-    public static Broadcast recordedFromUrl(String title, String videoUrl) {
-        Broadcast b = new Broadcast(title);
+    public static Broadcast recordedFromUrl(User owner, String title, String videoUrl) {
+        Broadcast b = new Broadcast(owner, title);
         b.videoUrl = videoUrl;
         return b;
     }
 
     /** A live broadcast starts READY: created, but the phone has not begun streaming yet. */
-    public static Broadcast live(String title, String broadcasterKeyHash) {
-        Broadcast b = new Broadcast(title);
+    public static Broadcast live(User owner, String title) {
+        Broadcast b = new Broadcast(owner, title);
         b.type = BroadcastType.LIVE;
         b.status = BroadcastStatus.READY;
-        b.broadcasterKeyHash = broadcasterKeyHash;
         return b;
+    }
+
+    public void rename(String newTitle) {
+        this.title = newTitle;
     }
 
     /** READY -> LIVE (no-op in any other state). */
@@ -129,5 +138,6 @@ public class Broadcast {
     public Instant getCreatedAt() { return createdAt; }
     public Instant getStartedAt() { return startedAt; }
     public Instant getEndedAt() { return endedAt; }
-    public String getBroadcasterKeyHash() { return broadcasterKeyHash; }
+    public User getOwner() { return owner; }
+    public Long getOwnerId() { return owner == null ? null : owner.getId(); }
 }

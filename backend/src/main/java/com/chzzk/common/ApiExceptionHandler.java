@@ -45,6 +45,16 @@ public class ApiExceptionHandler {
         return body(HttpStatus.FORBIDDEN, e.getMessage());
     }
 
+    @ExceptionHandler(UnauthorizedException.class)
+    ResponseEntity<ErrorBody> unauthorized(UnauthorizedException e) {
+        return body(HttpStatus.UNAUTHORIZED, e.getMessage());
+    }
+
+    @ExceptionHandler(ConflictException.class)
+    ResponseEntity<ErrorBody> conflict(ConflictException e) {
+        return body(HttpStatus.CONFLICT, e.getMessage());
+    }
+
     @ExceptionHandler(NotFoundException.class)
     ResponseEntity<ErrorBody> notFound(NotFoundException e) {
         return body(HttpStatus.NOT_FOUND, e.getMessage());

@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { endLiveBroadcast, getBroadcast, getIceServers, type Broadcast } from '../api/broadcasts'
 import { BroadcasterSession, type BroadcasterState } from '../live/broadcasterSession'
-import { clearBroadcasterKey, loadBroadcasterKey } from '../live/keyStore'
+import { tokenStore } from '../auth/tokenStore'
+import { useAuth } from '../auth/AuthContext'
 import { checkMediaSupport, describeMediaError, otherFacing, type Facing } from '../live/media'
 
 type Phase = 'preview' | BroadcasterState
@@ -31,7 +32,9 @@ export default function LiveStudioPage() {
   const videoRef = useRef<HTMLVideoElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const sessionRef = useRef<BroadcasterSession | null>(null)
-  const key = Number.isFinite(broadcastId) ? loadBroadcasterKey(broadcastId) : null
+  const { user } = useAuth()
+  // Only the owner can stream; the server re-checks the token on the signaling join and on "end".
+  const isOwner = broadcast !== null && user !== null && broadcast.ownerId === user.id
 
   useEffect(() => {
     if (!id) return
@@ -42,7 +45,7 @@ export default function LiveStudioPage() {
 
   // Open the camera + microphone for the preview (front camera first).
   useEffect(() => {
-    if (mediaError || !key) return
+    if (mediaError || !isOwner) return
     let cancelled = false
     navigator.mediaDevices
       .getUserMedia({ video: { facingMode: 'user' }, audio: true })
@@ -60,7 +63,7 @@ export default function LiveStudioPage() {
       stopStream(streamRef.current)
       streamRef.current = null
     }
-  }, [mediaError, key])
+  }, [mediaError, isOwner])
 
   const switchCamera = useCallback(async () => {
     const current = streamRef.current
@@ -86,10 +89,10 @@ export default function LiveStudioPage() {
 
   async function startBroadcast() {
     const stream = streamRef.current
-    if (!stream || !key || sessionRef.current) return
+    if (!stream || !isOwner || sessionRef.current) return
     setBusy(true)
     const iceServers = await getIceServers()
-    const session = new BroadcasterSession(broadcastId, key, iceServers, stream, {
+    const session = new BroadcasterSession(broadcastId, () => tokenStore.get(), iceServers, stream, {
       onState: (state, d) => {
         setPhase(state)
         setDetail(d)
@@ -108,15 +111,14 @@ export default function LiveStudioPage() {
     stopStream(streamRef.current)
     streamRef.current = null
     setHasStream(false)
-    clearBroadcasterKey(broadcastId)
     setViewerCount(0)
   }
 
   async function endBroadcast() {
-    if (!key) return
+    if (!isOwner) return
     setBusy(true)
     try {
-      await endLiveBroadcast(broadcastId, key) // the server also tells every viewer
+      await endLiveBroadcast(broadcastId) // the server also tells every viewer
       setPhase('ended')
       finishLocally()
     } catch (e) {
@@ -129,13 +131,12 @@ export default function LiveStudioPage() {
   if (loadError) return <p className="state error">{loadError}</p>
   if (!broadcast) return <p className="state">불러오는 중...</p>
 
-  if (!key && phase !== 'ended') {
+  if (!isOwner && phase !== 'ended') {
     return (
       <>
         <h1>{broadcast.title}</h1>
         <p className="notice">
-          이 브라우저 탭에는 이 방송의 방송자 키가 없어 송출할 수 없습니다. (키는 방송을 만든 탭의 sessionStorage에만 저장됩니다.)
-          새 라이브 방송을 만들어 주세요.
+          이 방송의 소유자만 송출할 수 있습니다. 방송을 만든 계정으로 로그인했는지 확인하거나 새 라이브 방송을 만들어 주세요.
         </p>
         <p>
           <Link to="/live/new">새 라이브 방송 만들기</Link> · <Link to={`/broadcasts/${broadcast.id}`}>시청 화면 보기</Link>

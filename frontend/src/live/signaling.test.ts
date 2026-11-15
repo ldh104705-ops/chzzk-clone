@@ -3,10 +3,10 @@ import { parseServerMessage, serializeClientMessage } from './signaling'
 
 describe('serializeClientMessage', () => {
   it('serializes join messages for both roles', () => {
-    expect(JSON.parse(serializeClientMessage({ type: 'join', role: 'broadcaster', broadcasterKey: 'k' }))).toEqual({
+    expect(JSON.parse(serializeClientMessage({ type: 'join', role: 'broadcaster', token: 'jwt.token.value' }))).toEqual({
       type: 'join',
       role: 'broadcaster',
-      broadcasterKey: 'k',
+      token: 'jwt.token.value',
     })
     expect(JSON.parse(serializeClientMessage({ type: 'join', role: 'viewer' }))).toEqual({ type: 'join', role: 'viewer' })
   })

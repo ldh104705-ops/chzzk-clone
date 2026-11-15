@@ -1,31 +1,37 @@
 package com.chzzk.broadcast;
 
+import com.chzzk.auth.CurrentUser;
 import java.net.URI;
 import java.util.List;
 import org.springframework.core.io.Resource;
 import org.springframework.http.CacheControl;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 /**
- * Steps 1-2: NO user authentication or authorization. Every endpoint is public; there is deliberately
- * no security dependency yet (login, ownership and permission checks arrive in step 3). The only
- * secret is the per-broadcast broadcaster key, which just stops a stranger from hijacking a stream.
+ * Who may call what (enforced by SecurityConfig for "must be logged in" and by BroadcastService for "must be the
+ * owner"):
+ * <ul>
+ *   <li>public: list, detail, video stream</li>
+ *   <li>logged in: create recorded / live broadcast (the caller becomes the owner)</li>
+ *   <li>owner only: rename, delete, end</li>
+ * </ul>
  */
 @RestController
 @RequestMapping("/api/broadcasts")
 public class BroadcastController {
-
-    public static final String BROADCASTER_KEY_HEADER = "X-Broadcaster-Key";
 
     private final BroadcastService service;
 
@@ -35,10 +41,11 @@ public class BroadcastController {
 
     @PostMapping(path = "/recorded", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<BroadcastResponse> registerRecorded(
+            @AuthenticationPrincipal Jwt jwt,
             @RequestParam(required = false) String title,
             @RequestParam(required = false) MultipartFile file,
             @RequestParam(required = false) String videoUrl) {
-        Broadcast created = service.registerRecorded(title, file, videoUrl);
+        Broadcast created = service.registerRecorded(CurrentUser.id(jwt), title, file, videoUrl);
         return ResponseEntity.created(URI.create("/api/broadcasts/" + created.getId()))
                 .body(BroadcastResponse.from(created));
     }
@@ -46,20 +53,33 @@ public class BroadcastController {
     public record CreateLiveRequest(String title) {
     }
 
-    /** Creates a live broadcast (status READY) and returns the one-time broadcaster key. */
-    @PostMapping("/live")
-    public ResponseEntity<LiveBroadcastResponse> createLive(@RequestBody CreateLiveRequest request) {
-        BroadcastService.CreatedLive created = service.createLive(request.title());
-        Broadcast b = created.broadcast();
-        return ResponseEntity.created(URI.create("/api/broadcasts/" + b.getId()))
-                .body(new LiveBroadcastResponse(BroadcastResponse.from(b), created.broadcasterKey()));
+    public record UpdateBroadcastRequest(String title) {
     }
 
-    /** Ends a live broadcast. Requires the broadcaster key from creation (403 otherwise). */
+    /** Creates a live broadcast (status READY) owned by the caller; only the owner can stream to it. */
+    @PostMapping("/live")
+    public ResponseEntity<BroadcastResponse> createLive(@AuthenticationPrincipal Jwt jwt,
+                                                        @RequestBody CreateLiveRequest request) {
+        Broadcast b = service.createLive(CurrentUser.id(jwt), request.title());
+        return ResponseEntity.created(URI.create("/api/broadcasts/" + b.getId())).body(BroadcastResponse.from(b));
+    }
+
+    /** Ends a live broadcast. Owner only (403 for anyone else). */
     @PostMapping("/{id}/end")
-    public BroadcastResponse end(@PathVariable long id,
-                                 @RequestHeader(name = BROADCASTER_KEY_HEADER, required = false) String broadcasterKey) {
-        return BroadcastResponse.from(service.endLive(id, broadcasterKey));
+    public BroadcastResponse end(@AuthenticationPrincipal Jwt jwt, @PathVariable long id) {
+        return BroadcastResponse.from(service.endLive(id, CurrentUser.id(jwt)));
+    }
+
+    @PatchMapping("/{id}")
+    public BroadcastResponse rename(@AuthenticationPrincipal Jwt jwt, @PathVariable long id,
+                                    @RequestBody UpdateBroadcastRequest request) {
+        return BroadcastResponse.from(service.rename(id, CurrentUser.id(jwt), request.title()));
+    }
+
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> delete(@AuthenticationPrincipal Jwt jwt, @PathVariable long id) {
+        service.delete(id, CurrentUser.id(jwt));
+        return ResponseEntity.noContent().build();
     }
 
     @GetMapping

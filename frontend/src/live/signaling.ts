@@ -1,7 +1,7 @@
 /** Wire format of the WebSocket signaling protocol (see LiveSignalingHandler on the backend). */
 
 export type ClientMessage =
-  | { type: 'join'; role: 'broadcaster'; broadcasterKey: string }
+  | { type: 'join'; role: 'broadcaster'; token: string }
   | { type: 'join'; role: 'viewer' }
   | { type: 'offer'; to: string; sdp: RTCSessionDescriptionInit }
   | { type: 'answer'; sdp: RTCSessionDescriptionInit }

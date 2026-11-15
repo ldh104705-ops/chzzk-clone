@@ -121,3 +121,39 @@ a:hover { text-decoration: underline; }
 }
 .notice.info { border-color: var(--border); color: var(--text); background: var(--panel); }
 .studio-form-hint { color: var(--muted); font-size: 0.875rem; }
+
+/* --- Accounts and comments (step 3) --- */
+.topbar nav { align-items: center; flex-wrap: wrap; }
+.nickname { font-weight: 600; }
+.card-owner { color: var(--muted); font-size: 0.8rem; margin-bottom: 6px; }
+.form input[type='password'] {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+}
+.comments { margin-top: 32px; }
+.comment-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; margin: 12px 0; }
+.comment-form textarea, .comment-form input {
+  flex: 1 1 260px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  resize: vertical;
+}
+.comment-list { list-style: none; margin: 0 0 16px; padding: 0; }
+.comment { padding: 12px 0; border-bottom: 1px solid var(--border); }
+.comment-head { display: flex; gap: 10px; align-items: baseline; color: var(--muted); font-size: 0.85rem; }
+.comment-head strong { color: var(--text); }
+.comment-body { margin: 4px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.comment-actions { display: flex; gap: 12px; }
+.link-button {
+  padding: 0; border: 0; background: none; color: var(--muted); font: inherit; font-size: 0.85rem; cursor: pointer;
+}
+.link-button:hover { color: var(--accent); text-decoration: underline; }
+.muted { color: var(--muted); }

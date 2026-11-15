@@ -1,7 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { createLiveBroadcast } from '../api/broadcasts'
-import { saveBroadcasterKey } from '../live/keyStore'
 import { checkMediaSupport } from '../live/media'
 
 export default function NewLivePage() {
@@ -11,7 +10,7 @@ export default function NewLivePage() {
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
-  // Creating the broadcast is harmless anywhere, but the camera only works on HTTPS: warn before the studio page.
+  // Creating the broadcast needs a login (RequireAuth); in addition the camera only works on HTTPS: warn before the studio page.
   const mediaProblem = checkMediaSupport({
     isSecureContext: window.isSecureContext,
     mediaDevices: navigator.mediaDevices,
@@ -27,8 +26,7 @@ export default function NewLivePage() {
     setSubmitting(true)
     try {
       const created = await createLiveBroadcast(title)
-      saveBroadcasterKey(created.broadcast.id, created.broadcasterKey)
-      navigate(`/live/${created.broadcast.id}/studio`)
+      navigate(`/live/${created.id}/studio`)
     } catch (err) {
       setSubmitError((err as Error).message)
       setSubmitting(false)
@@ -45,7 +43,7 @@ export default function NewLivePage() {
         <input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={200} />
         {titleError && <span className="field-error">{titleError}</span>}
       </label>
-      <p className="studio-form-hint">다음 화면에서 카메라·마이크 권한을 허용하고 &quot;방송 시작&quot;을 누르면 송출됩니다. 로그인은 필요 없습니다.</p>
+      <p className="studio-form-hint">다음 화면에서 카메라·마이크 권한을 허용하고 &quot;방송 시작&quot;을 누르면 송출됩니다.</p>
 
       {submitError && <p className="field-error">{submitError}</p>}
       <button type="submit" className="button primary" disabled={submitting}>

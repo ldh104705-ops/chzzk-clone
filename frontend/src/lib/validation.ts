@@ -34,3 +34,23 @@ export function validateRecordedForm(v: RecordedFormValues): RecordedFormErrors 
   }
   return errors
 }
+
+export interface SignupFormValues {
+  username: string
+  password: string
+  nickname: string
+}
+
+export type SignupFormErrors = Partial<Record<'username' | 'password' | 'nickname', string>>
+
+/** Client-side mirror of the server signup rules (the server remains the authority). */
+export function validateSignupForm(v: SignupFormValues): SignupFormErrors {
+  const errors: SignupFormErrors = {}
+  if (!/^[a-zA-Z0-9_]{3,30}$/.test(v.username.trim())) errors.username = '아이디는 영문·숫자·밑줄(_) 3~30자여야 합니다.'
+  if (v.password.length < 8) errors.password = '비밀번호는 8자 이상이어야 합니다.'
+  else if (new TextEncoder().encode(v.password).length > 72) errors.password = '비밀번호가 너무 깁니다(최대 72바이트).'
+  const nick = v.nickname.trim()
+  if (nick === '') errors.nickname = '닉네임을 입력해 주세요.'
+  else if ([...nick].length > 20) errors.nickname = '닉네임은 20자 이하여야 합니다.'
+  return errors
+}

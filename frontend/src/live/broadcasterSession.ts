@@ -15,7 +15,7 @@ const RECONNECT_DELAY_MS = 2000
 /**
  * Broadcaster side of the WebRTC mesh: one RTCPeerConnection per viewer, all sending the same camera stream.
  * Fine for a handful of viewers (each viewer costs the phone one more upload of the video).
- * The WebSocket is used only for signaling; if it drops the session reconnects with the same broadcaster key
+ * The WebSocket is used only for signaling; if it drops the session reconnects with the owner's login token (read again on every connect)
  * (the server keeps the broadcast LIVE for a grace period) and re-negotiates with every waiting viewer.
  */
 export class BroadcasterSession {
@@ -27,7 +27,7 @@ export class BroadcasterSession {
 
   constructor(
     private readonly broadcastId: number,
-    private readonly broadcasterKey: string,
+    private readonly getToken: () => string | null,
     private readonly iceServers: RTCIceServer[],
     private stream: MediaStream,
     private readonly callbacks: BroadcasterCallbacks,
@@ -63,7 +63,7 @@ export class BroadcasterSession {
 
   private connect(): void {
     this.socket = openSignalingSocket(signalingUrl(this.broadcastId), {
-      onOpen: () => this.socket?.send({ type: 'join', role: 'broadcaster', broadcasterKey: this.broadcasterKey }),
+      onOpen: () => this.socket?.send({ type: 'join', role: 'broadcaster', token: this.getToken() ?? '' }),
       onMessage: (message) => {
         // Handle messages strictly one after another: SDP/ICE handling is async and order matters.
         this.queue = this.queue.then(() => this.handle(message)).catch((e) => console.warn('signaling error', e))
@@ -113,7 +113,7 @@ export class BroadcasterSession {
         if (message.code === 'BROADCAST_ENDED') {
           this.stopped = true
           this.callbacks.onState('ended')
-        } else if (message.code === 'FORBIDDEN' || message.code === 'NOT_FOUND') {
+        } else if (message.code === 'UNAUTHORIZED' || message.code === 'FORBIDDEN' || message.code === 'NOT_FOUND') {
           this.stopped = true
           this.callbacks.onState('error', message.message)
         }
