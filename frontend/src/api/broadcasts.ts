@@ -1,20 +1,22 @@
 import { buildUrl } from './url'
 
-export type BroadcastType = 'RECORDED'
-export type BroadcastStatus = 'ENDED'
+export type BroadcastType = 'RECORDED' | 'LIVE'
+export type BroadcastStatus = 'READY' | 'LIVE' | 'ENDED'
 
 export interface Broadcast {
   id: number
   title: string
   type: BroadcastType
   status: BroadcastStatus
-  sourceType: 'FILE' | 'URL'
-  /** Absolute URL for external videos, API-relative path for uploaded files. Use resolvePlaybackUrl(). */
-  playbackUrl: string
+  sourceType: 'FILE' | 'URL' | 'LIVE'
+  /** Absolute URL for external videos, API-relative path for uploaded files, null for live broadcasts. */
+  playbackUrl: string | null
   originalFileName: string | null
   contentType: string | null
   sizeBytes: number | null
   createdAt: string
+  startedAt: string | null
+  endedAt: string | null
 }
 
 export class ApiError extends Error {
@@ -35,8 +37,18 @@ async function parseError(res: Response): Promise<ApiError> {
   return new ApiError(res.status, `요청에 실패했습니다 (HTTP ${res.status})`)
 }
 
-export async function listBroadcasts(): Promise<Broadcast[]> {
-  const res = await fetch(buildUrl('/api/broadcasts'))
+export interface ListFilter {
+  type?: BroadcastType
+  status?: BroadcastStatus
+}
+
+/** Lists broadcasts (the server puts LIVE ones first). Optional filters mirror ?type=&status=. */
+export async function listBroadcasts(filter: ListFilter = {}): Promise<Broadcast[]> {
+  const query = new URLSearchParams()
+  if (filter.type) query.set('type', filter.type)
+  if (filter.status) query.set('status', filter.status)
+  const qs = query.toString()
+  const res = await fetch(buildUrl('/api/broadcasts' + (qs ? '?' + qs : '')))
   if (!res.ok) throw await parseError(res)
   return res.json()
 }
@@ -65,5 +77,46 @@ export async function createRecordedBroadcast(input: RecordedInput): Promise<Bro
 
 /** Full URL the <video> element should load (external URL as-is, uploaded file via the API base). */
 export function resolvePlaybackUrl(b: Pick<Broadcast, 'playbackUrl'>): string {
-  return buildUrl(b.playbackUrl)
+  return b.playbackUrl ? buildUrl(b.playbackUrl) : ''
+}
+
+export interface CreatedLiveBroadcast {
+  broadcast: Broadcast
+  /** Secret shown only once; required to broadcast and to end the broadcast. */
+  broadcasterKey: string
+}
+
+export const BROADCASTER_KEY_HEADER = 'X-Broadcaster-Key'
+
+export async function createLiveBroadcast(title: string): Promise<CreatedLiveBroadcast> {
+  const res = await fetch(buildUrl('/api/broadcasts/live'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title: title.trim() }),
+  })
+  if (!res.ok) throw await parseError(res)
+  return res.json()
+}
+
+export async function endLiveBroadcast(id: number, broadcasterKey: string): Promise<Broadcast> {
+  const res = await fetch(buildUrl('/api/broadcasts/' + id + '/end'), {
+    method: 'POST',
+    headers: { [BROADCASTER_KEY_HEADER]: broadcasterKey },
+  })
+  if (!res.ok) throw await parseError(res)
+  return res.json()
+}
+
+/** STUN/TURN servers configured on the backend (APP_WEBRTC_*). Falls back to a public STUN server. */
+export async function getIceServers(): Promise<RTCIceServer[]> {
+  try {
+    const res = await fetch(buildUrl('/api/live/ice-servers'))
+    if (res.ok) {
+      const body = (await res.json()) as { iceServers?: RTCIceServer[] }
+      if (Array.isArray(body.iceServers)) return body.iceServers
+    }
+  } catch {
+    // use the fallback below
+  }
+  return [{ urls: 'stun:stun.l.google.com:19302' }]
 }

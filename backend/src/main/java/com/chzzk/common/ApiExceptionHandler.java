@@ -4,6 +4,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.ErrorResponse;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -32,6 +33,16 @@ public class ApiExceptionHandler {
     @ExceptionHandler(MethodArgumentTypeMismatchException.class)
     ResponseEntity<ErrorBody> badParameter(MethodArgumentTypeMismatchException e) {
         return body(HttpStatus.BAD_REQUEST, "잘못된 요청 파라미터입니다: " + e.getName());
+    }
+
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    ResponseEntity<ErrorBody> unreadable(HttpMessageNotReadableException e) {
+        return body(HttpStatus.BAD_REQUEST, "요청 본문(JSON)을 읽을 수 없습니다.");
+    }
+
+    @ExceptionHandler(ForbiddenException.class)
+    ResponseEntity<ErrorBody> forbidden(ForbiddenException e) {
+        return body(HttpStatus.FORBIDDEN, e.getMessage());
     }
 
     @ExceptionHandler(NotFoundException.class)

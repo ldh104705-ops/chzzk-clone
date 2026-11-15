@@ -97,3 +97,27 @@ a:hover { text-decoration: underline; }
 }
 .field-error, .state.error { color: var(--danger); font-size: 0.875rem; }
 .state { color: var(--muted); }
+
+/* --- Live broadcasting (step 2) --- */
+.badge.status-live { background: #ff3b3b; color: #fff; }
+.badge.status-ended { background: #33363b; color: var(--muted); }
+.badge.status-ready { background: #3a3520; color: #f2c94c; }
+.badge.badge-live { background: #2a2f3a; color: #8ab4ff; }
+
+.section-title { margin: 24px 0 12px; font-size: 1.1rem; }
+.topbar nav { display: flex; gap: 8px; }
+
+.video-box { position: relative; background: #000; border-radius: 8px; overflow: hidden; }
+.video-box video { display: block; width: 100%; max-height: 70vh; background: #000; }
+.video-overlay {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  padding: 16px; text-align: center; background: rgba(0, 0, 0, 0.65); color: var(--text);
+}
+.controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 12px 0; }
+.button.danger { background: var(--danger); border-color: var(--danger); color: #1c0606; font-weight: 600; }
+.notice {
+  padding: 12px 14px; border: 1px solid var(--danger); border-radius: 6px;
+  color: var(--danger); background: rgba(255, 107, 107, 0.08); overflow-wrap: anywhere;
+}
+.notice.info { border-color: var(--border); color: var(--text); background: var(--panel); }
+.studio-form-hint { color: var(--muted); font-size: 0.875rem; }

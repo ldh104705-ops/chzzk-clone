@@ -4,8 +4,9 @@ import java.time.Instant;
 
 /**
  * API representation of a broadcast.
- * {@code playbackUrl} is what the player uses: for uploaded files it is this server's
+ * For recordings {@code playbackUrl} is what the player uses: for uploaded files it is this server's
  * {@code /api/broadcasts/{id}/video} path, for external-URL broadcasts it is that URL itself.
+ * Live broadcasts have {@code sourceType} "LIVE" and no playback URL (viewers use WebRTC signaling).
  */
 public record BroadcastResponse(
         Long id,
@@ -17,9 +18,15 @@ public record BroadcastResponse(
         String originalFileName,
         String contentType,
         Long sizeBytes,
-        Instant createdAt) {
+        Instant createdAt,
+        Instant startedAt,
+        Instant endedAt) {
 
     public static BroadcastResponse from(Broadcast b) {
+        if (b.isLiveType()) {
+            return new BroadcastResponse(b.getId(), b.getTitle(), b.getType(), b.getStatus(), "LIVE", null,
+                    null, null, null, b.getCreatedAt(), b.getStartedAt(), b.getEndedAt());
+        }
         boolean file = b.isStoredFile();
         return new BroadcastResponse(
                 b.getId(),
@@ -31,6 +38,8 @@ public record BroadcastResponse(
                 b.getOriginalFileName(),
                 b.getContentType(),
                 b.getSizeBytes(),
-                b.getCreatedAt());
+                b.getCreatedAt(),
+                b.getStartedAt(),
+                b.getEndedAt());
     }
 }

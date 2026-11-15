@@ -48,6 +48,16 @@ public class Broadcast {
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
+    @Column(name = "started_at")
+    private Instant startedAt;
+
+    @Column(name = "ended_at")
+    private Instant endedAt;
+
+    /** SHA-256 hex of the broadcaster key (LIVE broadcasts only). Never exposed through the API. */
+    @Column(name = "broadcaster_key_hash", length = 64)
+    private String broadcasterKeyHash;
+
     protected Broadcast() {
     }
 
@@ -74,6 +84,35 @@ public class Broadcast {
         return b;
     }
 
+    /** A live broadcast starts READY: created, but the phone has not begun streaming yet. */
+    public static Broadcast live(String title, String broadcasterKeyHash) {
+        Broadcast b = new Broadcast(title);
+        b.type = BroadcastType.LIVE;
+        b.status = BroadcastStatus.READY;
+        b.broadcasterKeyHash = broadcasterKeyHash;
+        return b;
+    }
+
+    /** READY -> LIVE (no-op in any other state). */
+    public void markLive() {
+        if (status == BroadcastStatus.READY) {
+            status = BroadcastStatus.LIVE;
+            startedAt = Instant.now();
+        }
+    }
+
+    /** Any state -> ENDED (no-op when already ENDED). */
+    public void markEnded() {
+        if (status != BroadcastStatus.ENDED) {
+            status = BroadcastStatus.ENDED;
+            endedAt = Instant.now();
+        }
+    }
+
+    public boolean isLiveType() {
+        return type == BroadcastType.LIVE;
+    }
+
     public boolean isStoredFile() {
         return storedFileName != null;
     }
@@ -88,4 +127,7 @@ public class Broadcast {
     public Long getSizeBytes() { return sizeBytes; }
     public String getVideoUrl() { return videoUrl; }
     public Instant getCreatedAt() { return createdAt; }
+    public Instant getStartedAt() { return startedAt; }
+    public Instant getEndedAt() { return endedAt; }
+    public String getBroadcasterKeyHash() { return broadcasterKeyHash; }
 }
