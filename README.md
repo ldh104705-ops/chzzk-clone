@@ -2,7 +2,7 @@
 
 ## 1. 프로젝트 소개
 
-치지직(CHZZK) 스타일의 라이브 스트리밍 사이트를 4단계에 걸쳐 만드는 과제 프로젝트입니다. 1단계는 로그인 없이 녹화된 영상을 등록하고, 목록·상세 화면에서 재생하는 기능이고, 2단계는 휴대폰 카메라·마이크로 하는 라이브 송출(WebRTC)과 시청입니다. 3단계에서는 회원가입·로그인(JWT)과 방송 소유자 권한 검사, 댓글을 추가했습니다. 이후 단계에서 도네이션(토스페이먼츠 테스트 모드)을 같은 코드베이스에 이어서 추가합니다.
+치지직(CHZZK) 스타일의 라이브 스트리밍 사이트를 4단계에 걸쳐 만드는 과제 프로젝트입니다. 1단계는 로그인 없이 녹화된 영상을 등록하고, 목록·상세 화면에서 재생하는 기능이고, 2단계는 휴대폰 카메라·마이크로 하는 라이브 송출(WebRTC)과 시청입니다. 3단계에서는 회원가입·로그인(JWT)과 방송 소유자 권한 검사, 댓글을 추가했습니다. 4단계에서는 토스페이먼츠 테스트 모드로 방송자에게 후원(도네이션)하는 기능을 추가했습니다.
 
 모노레포 구성:
 
@@ -63,6 +63,12 @@ cd frontend && npm run build                         # 타입 검사(tsc) + 프�
 | `APP_MAX_UPLOAD_SIZE` | `500MB` | 업로드 최대 크기 |
 | `APP_JWT_SECRET` | 빈 값(실행마다 무작위 생성) | 로그인 토큰(JWT, HS256) 서명 비밀키, **32바이트 이상**. 비워 두면 서버는 시작되지만 실행마다 무작위 키를 만들고 WARN을 남기므로 재시작하면 모든 로그인이 풀립니다. 실제 값은 저장소에 커밋하지 마세요 |
 | `APP_JWT_TTL` | `PT12H` | 로그인 토큰 유효 시간(ISO-8601, 예: `PT12H`, `P7D`) |
+| `TOSS_CLIENT_KEY` | 빈 값 | (4단계) 토스페이먼츠 **테스트** 클라이언트 키(`test_gck_…`). 브라우저에 전달되는 공개 키입니다. 비우면 서버는 시작되지만 후원이 꺼집니다(`/api/payments/config` → `{"enabled":false}`, 후원 API는 503) |
+| `TOSS_SECRET_KEY` | 빈 값 | (4단계) 토스페이먼츠 **테스트** 시크릿 키(`test_gsk_…`). **서버에서만** 사용(결제 승인 호출). 저장소·프론트엔드에 넣지 마세요 |
+| `TOSS_API_BASE_URL` | `https://api.tosspayments.com` | 토스페이먼츠 API 주소(테스트 키도 같은 주소) |
+| `TOSS_WEBHOOK_ENABLED` | `false` | `true`이면 `POST /api/payments/toss/webhook`이 승인 통지를 처리합니다(꺼져 있으면 404) |
+| `TOSS_ALLOW_LIVE_KEYS` | `false` | 기본은 `test_`로 시작하지 않는 키를 거절하고 후원을 끕니다. 이 과제는 테스트 모드 전용이므로 `true`로 바꾸지 마세요 |
+| `APP_FRONTEND_BASE_URL` | `http://localhost:5173` | 결제창 이후 토스가 브라우저를 돌려보낼 프론트엔드 주소(`<주소>/donations/success`, `/donations/fail`) |
 | `APP_LIVE_GRACE_SECONDS` | `15` | 방송자 연결이 끊긴 뒤 방송을 종료 처리하기까지 기다리는 시간(초). 그 안에 재접속하면 방송이 유지됩니다 |
 | `APP_WEBRTC_STUN_URLS` | `stun:stun.l.google.com:19302` | WebRTC STUN 서버(쉼표 구분). `GET /api/live/ice-servers`로 프론트에 전달됩니다 |
 | `APP_WEBRTC_TURN_URLS` | 빈 값 | (선택) TURN 서버 URL(쉼표 구분). 비우면 TURN 미사용 |
@@ -86,7 +92,7 @@ cd frontend && npm run build                         # 타입 검사(tsc) + 프�
 docker compose up -d
 ```
 
-PostgreSQL 17 컨테이너(DB/사용자/비밀번호 기본값 `chzzk`, 포트 5432)가 실행되며 데이터는 Docker 볼륨(`chzzk-pgdata`)에 보존됩니다. 테이블은 백엔드 시작 시 **Flyway가 자동으로 생성**합니다(`backend/src/main/resources/db/migration/`의 `V1`(방송), `V2`(라이브), `V3`(회원·방송 소유자·댓글)). Hibernate는 스키마를 만들지 않고 검증만 합니다(`ddl-auto=validate`). 데이터를 초기화하려면 `docker compose down -v`를 실행합니다.
+PostgreSQL 17 컨테이너(DB/사용자/비밀번호 기본값 `chzzk`, 포트 5432)가 실행되며 데이터는 Docker 볼륨(`chzzk-pgdata`)에 보존됩니다. 테이블은 백엔드 시작 시 **Flyway가 자동으로 생성**합니다(`backend/src/main/resources/db/migration/`의 `V1`(방송), `V2`(라이브), `V3`(회원·방송 소유자·댓글), `V4`(도네이션)). Hibernate는 스키마를 만들지 않고 검증만 합니다(`ddl-auto=validate`). 데이터를 초기화하려면 `docker compose down -v`를 실행합니다.
 
 ## 5. 설계 결정과 이유
 
@@ -125,6 +131,20 @@ PostgreSQL 17 컨테이너(DB/사용자/비밀번호 기본값 `chzzk`, 포트 5
 - **댓글 갱신은 폴링**: 라이브 방송에서도 댓글은 4초마다 다시 불러옵니다. 이미 있는 시그널링 소켓은 방송자·시청자 협상용이라 댓글 방송 로직을 섞지 않았고, 폴링은 서버 상태·재접속 처리가 필요 없어 단순하며 시청자 수가 소수인 이 과제 규모에 충분합니다. 실시간성이 더 필요하면 댓글 전용 WebSocket/SSE로 바꿀 수 있습니다. 화면이 보이지 않는 탭에서는 폴링을 건너뜁니다.
 - **댓글 수정·삭제는 작성자만**: 방송 소유자도 남의 댓글은 지울 수 없습니다(관리자·신고 기능은 범위 밖). 목록은 최신 N개 페이지로 주고 `더 보기`로 이전 페이지를 이어 붙입니다.
 - **CORS에 `Authorization` 허용**: Spring Security의 CORS 필터가 인증보다 먼저 프리플라이트(OPTIONS)에 답하도록 `CorsConfigurationSource` 빈으로 바꿨고, 허용 헤더에 `Authorization`을 명시했습니다(와일드카드는 이 헤더를 포함하지 않습니다). 허용 Origin은 계속 `APP_CORS_ALLOWED_ORIGINS`입니다.
+
+4단계에서 추가한 결정:
+
+- **결제 서비스는 토스페이먼츠**: 개발자센터 회원가입만으로 무료 **테스트 키**를 받을 수 있어 사업자 등록 없이 과제 환경에서 끝까지 시험할 수 있고, 한국어 문서와 결제창 SDK v2 + 서버 승인 API(클라이언트 키/시크릿 키 분리)가 갖춰져 있습니다. 현재 문서가 새 연동에 권장하는 **결제창형 결제**(`widgets()` + `renderPaymentWindow()`)를 썼고, 구버전 결제창(`payment()`)은 쓰지 않았습니다.
+- **서버 쪽 검증이 확정의 유일한 근거**: 브라우저가 알려 주는 성공 표시·쿼리스트링(금액 포함)은 조작할 수 있으므로 확정에 쓰지 않습니다. 서버가 저장된 주문(금액, 주문 당사자, 방송 소유자)과 토스의 승인 응답(`DONE`, 주문번호, `paymentKey`, 총액)을 모두 대조합니다. 토스에 보내는 금액도 요청값이 아니라 저장된 금액입니다. 키는 테스트 키만 허용하므로 확정되는 결제는 테스트 결제뿐입니다.
+- **중복 방지는 DB가 보장**: 애플리케이션의 `if`만 믿지 않고 `UNIQUE(order_id)`·`UNIQUE(payment_key)`·`CHECK`를 두고, 확정은 행 잠금(`FOR UPDATE`) + 조건부 `UPDATE … WHERE status='PENDING'`으로 합니다. 잠금 덕분에 동시 요청이 와도 토스 승인 호출조차 한 번만 나가고, 제약이 최후 방어선입니다. 반복 요청은 에러가 아니라 **같은 결과(200)** 로 답해 새로고침·재시도·웹훅 재전송을 안전하게 만들었습니다(다른 `paymentKey`만 409).
+- **확실한 거절만 `FAILED`, 불확실하면 `PENDING` 유지**: 토스가 거절하면 최종 상태로 닫지만, 타임아웃·5xx처럼 승인 여부를 모르는 경우에 `FAILED`로 닫으면 돈은 빠져나갔는데 후원은 없는 상태가 될 수 있어 `PENDING`으로 두고 재시도하게 했습니다.
+- **웹훅은 본문을 믿지 않고 재조회**: 웹훅 URL은 누구나 호출할 수 있으므로 본문의 상태·금액을 믿지 않고 `paymentKey`만 받아 토스에서 다시 조회해 같은 검증을 합니다(위조된 통지로는 아무것도 확정되지 않음). 그래서 서명 헤더 검증은 생략했습니다(과제 범위). 기본은 꺼져 있습니다.
+- **자기 방송 후원은 막음(400 + DB `CHECK`)**: 자기가 자기에게 후원하면 후원 합계·내역만 부풀릴 수 있고 실제 의미가 없으며, 실제 서비스도 대부분 막습니다. 결제 전에 서버가 거절하므로 불필요한 결제창도 열리지 않습니다. 소유자가 없는 옛 방송(`owner_id` NULL)은 받을 사람이 없어 후원할 수 없습니다.
+- **방송을 지워도 후원 기록은 남김**: `donation.broadcast_id`는 `ON DELETE SET NULL`입니다. 방송자가 받은 돈의 기록이므로 방송과 함께 지우지 않으며, 방송이 지워진 뒤에는 대기 중 주문을 확정하지 않습니다. 확정 직전에 방송 소유자가 바뀌었는지도 다시 확인합니다.
+- **금액·메시지 한도는 세 겹**: UI(즉시 안내), 서버(400), DB `CHECK`(1,000~1,000,000원, 메시지 100자) 모두에서 같은 규칙을 검사합니다. 서버를 우회해도 DB가 막습니다.
+- **키는 환경변수 전용, 없어도 서버는 시작**: 키가 없거나 `test_`가 아니면 후원 기능만 꺼집니다(503/`enabled:false`). 다른 단계 기능은 그대로 동작해 채점·실행 환경에 키가 없어도 앱이 뜹니다. 코드와 `.env.example`에는 키가 없고 자리표시자만 있습니다.
+- **`customerKey`는 요청마다 무작위 UUID**: 토스는 추측하기 어려운 22자 이상의 값을 요구하므로 사용자 id·이메일 대신 무작위 값을 씁니다(자동결제·저장된 결제수단 기능은 쓰지 않음).
+- **후원 목록은 공개 + 합계는 SQL `SUM`**: 댓글처럼 누구나 볼 수 있고, `CONFIRMED`만 집계합니다. 합계는 목록 길이 제한과 무관하게 DB가 계산합니다. 라이브 방송은 댓글처럼 폴링합니다.
 
 ## 1단계: 인증·인가 없는 녹화방송
 
@@ -334,6 +354,107 @@ code $API/api/broadcasts/$ID                                                 # 4
 5. 로그인 상태에서 개발자 도구 → Application → Local Storage의 `chzzk.token`을 지우거나 값을 바꾼 뒤 새로고침하면(또는 로그아웃 후 다른 탭에서 요청하면) 로그아웃 상태로 돌아가는지 확인합니다(401 처리).
 6. 라이브 송출은 2단계 절차대로 하되 소유자 계정으로 로그인한 상태에서 스튜디오를 열어야 합니다. 다른 계정으로 `/live/<id>/studio`를 열면 "이 방송의 소유자만 송출할 수 있습니다" 안내가 나와야 합니다.
 
-## 4단계: 도네이션 (진행 예정)
+## 4단계: 도네이션 (토스페이먼츠 테스트 모드)
 
-> 토스페이먼츠 테스트 모드 결제, 서버 승인 확인, 중복 통지 방어, 방송별 후원 내역·합계, 테스트 결제 성공·실패·취소·중복 통지 확인 방법은 이 단계에서 작성합니다.
+### 구현 범위
+
+로그인한 사용자가 방송 상세 화면에서 **방송자(방송 소유자)** 에게 금액과 메시지를 정해 후원합니다. 결제는 토스페이먼츠 **테스트 모드**로 진행하므로 실제 돈은 움직이지 않습니다. 후원은 **서버가 토스에 승인을 요청하고 그 결과를 주문과 대조한 뒤에만** 확정되며, 같은 승인 요청·통지가 몇 번 반복돼도 한 번만 적립됩니다.
+
+- **결제 흐름** (결제창형 결제, 토스 JS SDK v2 `widgets()` → `renderPaymentWindow()` → `requestPayment()`):
+  1. 상세 화면의 후원 폼에서 금액(프리셋 1,000/5,000/10,000/50,000원 또는 직접 입력, **1,000 ~ 1,000,000원 정수**)과 메시지(선택, 100자 이하)를 정합니다. 받는 사람(방송자 닉네임)이 폼에 표시됩니다.
+  2. `POST /api/donations`(로그인 필요): 서버가 `PENDING` 후원 행을 만들고 `orderId`(`donation_<UUID>`), 금액, `orderName`, `customerKey`, 성공/실패 URL(`APP_FRONTEND_BASE_URL` 기준)을 돌려줍니다. 받는 사람은 **요청이 아니라 서버가 그 시점의 방송 소유자로 정합니다**.
+  3. 프론트엔드가 토스 SDK(`https://js.tosspayments.com/v2/standard`)로 결제창을 띄우고, 토스가 브라우저를 `/donations/success?paymentKey&orderId&amount` 또는 `/donations/fail?code&message&orderId`로 보냅니다.
+  4. 성공 페이지가 `POST /api/donations/confirm {paymentKey, orderId, amount}`를 호출합니다. **서버**가 ① 주문이 호출자의 것인지(아니면 403), ② 상태가 `PENDING`인지, ③ 금액이 저장된 금액과 같은지(아니면 400, 토스 호출 없음), ④ 받는 사람이 아직 그 방송의 소유자인지 확인한 뒤 토스 `POST /v1/payments/confirm`(Basic 인증 `base64(시크릿키:)`)을 호출하고, 응답이 `status == DONE`, 같은 `orderId`·`paymentKey`, `totalAmount ==` 저장 금액일 때만 `CONFIRMED`로 바꿉니다. 화면의 성공 표시나 쿼리스트링만으로는 아무것도 확정되지 않습니다.
+  5. 실패 페이지가 `POST /api/donations/{orderId}/fail`을 호출합니다. 결제창을 닫거나 취소한 경우(`PAY_PROCESS_CANCELED`, `USER_CANCEL`)는 `CANCELED`, 그 밖의 실패는 `FAILED`(코드·메시지 저장)입니다. 이미 확정된 후원은 이 호출로 바뀌지 않습니다.
+  6. (선택) `POST /api/payments/toss/webhook`(공개, `TOSS_WEBHOOK_ENABLED=true`일 때만 동작, 꺼져 있으면 404): **본문을 믿지 않고** `data.paymentKey`만 읽어 토스에서 결제를 다시 조회(`GET /v1/payments/{paymentKey}`)한 뒤 같은 검증·멱등 로직을 적용합니다. 토스가 승인했는데 우리 서버가 기록하지 못한 결제(브라우저가 닫힘 등)를 복구하는 경로입니다.
+- **API 요약**
+
+  | 엔드포인트 | 권한 | 설명 |
+  | --- | --- | --- |
+  | `GET /api/payments/config` | 공개 | `{enabled:false}` 또는 `{enabled:true, clientKey, minAmount, maxAmount, maxMessageLength}` (시크릿 키는 절대 내려가지 않음) |
+  | `POST /api/donations` | 로그인 | 후원 주문 생성(201). 금액·메시지 검증 400, 없는 방송 404, **자기 방송 400**, 키 없음 503 |
+  | `POST /api/donations/confirm` | 로그인, 주문 당사자만 | 승인 확인·확정(멱등). 남의 주문 403, 금액 불일치 400, 다른 `paymentKey`로 재확정 409, 토스 거절 400(`FAILED`), 토스 응답 불가·불일치 502 |
+  | `POST /api/donations/{orderId}/fail` | 로그인, 주문 당사자만 | 대기 중 주문을 `CANCELED`/`FAILED`로 닫음 |
+  | `GET /api/broadcasts/{id}/donations` | 공개 | **확정된** 후원만 최신순(후원자 닉네임, 금액, 메시지, 승인 시각) + `totalAmount`(SQL `SUM`) + `count` |
+  | `POST /api/payments/toss/webhook` | 공개(토스), 기본 꺼짐 | 위 6번 |
+
+- **상태**: `PENDING`(생성됨) → `CONFIRMED`(토스 승인 + 서버 검증 완료, 합계에 포함되는 유일한 상태) / `FAILED`(거절·검증 실패) / `CANCELED`(결제창 닫음). `PENDING`만 다른 상태로 바뀌고 나머지는 최종 상태입니다.
+- **저장 구조와 중복 방지 (Flyway `V4__create_donation.sql`)**: `donation` 테이블에 `UNIQUE(order_id)`, `UNIQUE(payment_key)`(승인 전에는 NULL이라 `PENDING` 행은 여러 개 가능), `CHECK(amount BETWEEN 1000 AND 1000000)`, `CHECK(status IN ('PENDING','CONFIRMED','FAILED','CANCELED'))`, `CHECK(status <> 'CONFIRMED' OR (payment_key IS NOT NULL AND approved_at IS NOT NULL))`, `CHECK(donor_id <> recipient_id)`(자기 후원 금지), 주문번호 형식 `CHECK`, `donor_id`·`recipient_id`·`broadcast_id` 외래키가 있습니다. 확정은 `SELECT … FOR UPDATE`로 행을 잠근 뒤 `UPDATE donation SET status='CONFIRMED', payment_key=…, approved_at=… WHERE order_id=? AND status='PENDING'`(조건부 UPDATE, 영향 행 1개일 때만 성공)로 합니다. 그래서 같은 승인에 대한 `confirm`·웹훅이 반복되거나 동시에 들어와도 **한 번만** 적립됩니다. 코드가 실수해도 DB 제약이 마지막으로 막고, 제약 위반(`DataIntegrityViolationException`)은 이미 같은 결제로 확정된 경우 기존 결과(200), 다른 후원이 쓴 결제면 409로 바꿉니다.
+- **반복 호출 동작**: 이미 `CONFIRMED`인 주문에 같은 `paymentKey`로 `confirm`을 다시 보내면 **토스를 다시 호출하지 않고** 200과 기존 결과(`alreadyConfirmed:true`)를 돌려주며 합계는 그대로입니다. 다른 `paymentKey`면 409입니다. 토스에는 `Idempotency-Key` 헤더도 보냅니다(주문별 고정값).
+- **토스 오류 처리**: 토스가 결제를 거절(4xx)하면 `FAILED`로 닫고 사유를 저장합니다. 네트워크 오류·타임아웃·5xx·키 오류처럼 **신뢰할 만한 답을 못 받은 경우**는 결제가 승인됐는지 알 수 없으므로 `PENDING`을 유지하고 502를 돌려줍니다(같은 요청을 다시 보내면 안전하게 이어집니다). 토스가 `ALREADY_PROCESSED_PAYMENT`라고 답하면 결제를 조회해 같은 검증을 거칩니다.
+- **키 설정과 테스트 모드 전용**: 키는 환경변수로만 받습니다(`TOSS_CLIENT_KEY`, `TOSS_SECRET_KEY`, [`.env.example`](.env.example)에 자리표시자). **키가 없어도 서버는 시작**되고, 이때 `/api/payments/config`는 `{"enabled":false}`, 후원 생성·확정은 503(`결제 설정이 없어 후원을 사용할 수 없습니다.`)이며 화면에는 같은 문구가 보입니다. 키가 `test_`로 시작하지 않으면(`TOSS_ALLOW_LIVE_KEYS=true`가 아닌 한) WARN을 남기고 후원을 끈 상태로 둡니다. 시크릿 키는 서버에서만 쓰고 응답·로그에 남기지 않습니다.
+- **프론트엔드**: 방송 상세(녹화·라이브 모두)에 후원 영역(금액 프리셋·직접 입력·메시지·받는 사람 표시, 후원 건수·합계, 후원 내역; 라이브 방송은 4초마다 폴링)이 있고, `/donations/success`, `/donations/fail` 페이지(로그인 필요)가 서버 확정/실패 보고를 호출하고 결과를 보여 줍니다. 로그아웃 상태·자기 방송·키 없음일 때는 폼 대신 이유를 안내합니다.
+- **자동화 테스트(가짜 토스 클라이언트 사용, 네트워크 호출 없음)**: 키 없음(config `enabled:false`, 생성·확정 503, 웹훅 404), `test_` 아닌 키 거절, 로그인 필요(401), 금액·메시지 검증, 자기 후원 400, 확정 성공 → `CONFIRMED`이고 목록·합계 반영, 금액 불일치 400(토스 호출 없음), 남의 주문 403, 토스 거절 → `FAILED`, 토스 응답 불가 → 502·`PENDING` 유지 후 재시도 성공, 토스 응답이 주문과 다르면 확정하지 않음, 방송자 변경·방송 삭제 시 미확정, 같은 `paymentKey` 반복 확정 → 200·토스 1회 호출·합계 1회, 다른 `paymentKey` 409, 같은 결제로 두 주문 확정 시도 → 제약 위반 409, **5개 스레드 동시 확정 → 1회만 적립**, 취소/실패 엔드포인트, 웹훅(복구·중복·위조 본문 무시), DB 제약 직접 검증(`order_id`/`payment_key` 중복 INSERT 거부 등). 프론트엔드는 금액 검증과 성공/실패 쿼리 파싱 단위 테스트가 있습니다.
+- **한계**: 실제 토스 샌드박스와의 통신은 자동화 테스트가 아니라 아래 직접 확인 절차로 확인해야 합니다(작성자가 키 없이 코드를 작성했으므로 이 README는 토스 문서를 따라 쓴 것이며 결제 테스트를 수행했다고 주장하지 않습니다). 환불·결제 취소 API, 방치된 `PENDING` 주문 정리, 웹훅 서명(`tosspayments-webhook-signature`) 검증은 범위 밖입니다.
+
+### 직접 확인 절차
+
+**0. 토스 테스트 키 받기와 실행**
+
+1. [토스페이먼츠 개발자센터](https://developers.tosspayments.com)에서 이메일로 회원가입하고 로그인합니다(문서 기준 테스트 키는 사업자 등록 없이 받을 수 있습니다. 화면 구성은 바뀔 수 있습니다).
+2. 왼쪽 **API 키** 메뉴의 **주문서형, 결제창형 연동 키**에서 **테스트** 클라이언트 키(`test_gck_…`)와 시크릿 키(`test_gsk_…`)를 확인합니다. (`test_ck_…`/`test_sk_…`인 "API 개별 연동 키"는 이 구현이 쓰는 결제창형 SDK와 맞지 않습니다.)
+3. 백엔드를 실행하는 셸에 환경변수를 설정하고 실행합니다. **키를 파일에 적어 커밋하지 마세요.**
+
+   ```bash
+   docker compose up -d
+   # Git Bash / macOS / Linux
+   export TOSS_CLIENT_KEY='test_gck_...'     # 개발자센터에서 복사한 테스트 키
+   export TOSS_SECRET_KEY='test_gsk_...'
+   cd backend && ./gradlew bootRun
+   # Windows PowerShell:  $env:TOSS_CLIENT_KEY='test_gck_...'; $env:TOSS_SECRET_KEY='test_gsk_...'; .\gradlew.bat bootRun
+   # 프론트엔드는 새 터미널에서: cd frontend && npm install && npm run dev   (http://localhost:5173)
+   curl -s http://localhost:8080/api/payments/config      # {"enabled":true,"clientKey":"test_gck_...",...} (시크릿 키는 없어야 함)
+   ```
+
+   키를 설정하지 않고 실행하면 서버는 시작되고 위 `curl`이 `{"enabled":false}`를 돌려주며 후원 폼 자리에 `결제 설정이 없어 후원을 사용할 수 없습니다`가 보입니다.
+4. 두 계정을 만듭니다: 계정 A(방송자)와 계정 B(후원자). 브라우저 일반 창/시크릿 창으로 나누면 편합니다. A로 로그인해 녹화방송을 하나 등록합니다(영상 URL 방식이면 간단).
+
+**1. 결제 성공** — B로 로그인해 A의 방송 상세를 엽니다. 후원 영역에 "후원 받는 사람: A 닉네임 (방송자)"가 보이는지 확인하고, 금액(예: 5,000원)과 메시지를 정한 뒤 `후원하기`를 누릅니다. 토스 결제창에서 테스트 결제를 진행합니다(테스트 환경이라 카드 번호를 넣어도 가상으로 승인되며 돈이 빠져나가지 않습니다. 자세한 규칙은 [토스 테스트 환경 안내](https://docs.tosspayments.com/guides/v2/get-started/environment)). `/donations/success`에서 "후원이 확정되었습니다"가 보이고, 방송 상세로 돌아가면 후원 내역에 B의 닉네임·금액·메시지가 있고 합계가 5,000원 늘어야 합니다. DB에서도 확인합니다.
+
+```bash
+docker exec chzzk-postgres psql -U chzzk -d chzzk -c "SELECT order_id, status, amount, payment_key, approved_at FROM donation ORDER BY id DESC LIMIT 5;"
+curl -s http://localhost:8080/api/broadcasts/<방송id>/donations     # 로그인 없이 확정된 후원 + totalAmount + count
+```
+
+**2. 결제 실패** — 두 가지로 확인합니다.
+- 서버 검증 실패(금액 변조): 성공 후 받은 값이 아니라 새 주문으로 시험합니다. B로 로그인한 토큰(`Authorization: Bearer <토큰>`)으로 주문을 만들고(`POST /api/donations`, `{"broadcastId":<id>,"amount":5000}`), 응답의 `orderId`에 **다른 금액**으로 `confirm`을 보냅니다.
+
+  ```bash
+  curl -s -X POST http://localhost:8080/api/donations/confirm -H 'Content-Type: application/json' -H "Authorization: Bearer $TOKEN" \
+    -d '{"paymentKey":"anything","orderId":"<orderId>","amount":100}'     # 400 "결제 금액이 주문 금액과 일치하지 않습니다." (토스 호출 없음, 주문은 PENDING 그대로)
+  ```
+- 토스가 거절하는 경우: 같은 주문에 존재하지 않는 `paymentKey`로 `amount`를 올바르게 넣어 `confirm`을 보내면 토스가 오류를 답하고(예: `NOT_FOUND_PAYMENT`) 서버는 주문을 `FAILED`(`fail_code`에 토스 코드 저장)로 닫고 400을 돌려줍니다. 합계는 늘지 않습니다. 결제창에서 카드사 거절 등으로 실패하면 `/donations/fail`이 열리고 같은 방식으로 `FAILED`가 됩니다(토스가 실패를 재현하는 방법은 위 테스트 환경 안내 참고).
+
+**3. 결제 취소** — `후원하기`로 결제창을 연 뒤 결제를 끝내지 않고 창을 닫거나 결제 중 `취소`를 누릅니다. 닫으면 "결제가 취소되었습니다. 후원은 적립되지 않았습니다.", 결제 진행 중 취소하면 `/donations/fail`(`PAY_PROCESS_CANCELED`)에서 "결제가 취소되었습니다"가 보이고, DB의 해당 주문은 `CANCELED`, 후원 합계는 그대로여야 합니다. 취소된 주문에 `confirm`을 보내면 409입니다.
+
+**4. 승인 통지(확정 요청) 중복** — 1번처럼 성공한 뒤, 같은 요청을 다시 보내 봅니다.
+- 성공 페이지(`/donations/success?paymentKey=…&orderId=…&amount=…`)를 **새로고침**하면 "이미 확정된 후원입니다. 중복 적립은 되지 않았습니다."가 보이고 합계는 그대로입니다.
+- 같은 요청을 `curl`로 반복합니다(값은 성공 페이지 주소창의 쿼리에서 복사).
+
+  ```bash
+  for i in 1 2 3; do curl -s -X POST http://localhost:8080/api/donations/confirm -H 'Content-Type: application/json' -H "Authorization: Bearer $TOKEN" \
+    -d '{"paymentKey":"<paymentKey>","orderId":"<orderId>","amount":5000}'; echo; done     # 매번 200, status CONFIRMED, alreadyConfirmed:true
+  curl -s -X POST http://localhost:8080/api/donations/confirm -H 'Content-Type: application/json' -H "Authorization: Bearer $TOKEN" \
+    -d '{"paymentKey":"other-key","orderId":"<orderId>","amount":5000}'                  # 409 (이미 다른 결제로 확정)
+  curl -s http://localhost:8080/api/broadcasts/<방송id>/donations                          # totalAmount, count 가 처음과 같음
+  ```
+
+  백엔드 로그에서 토스 승인 호출이 처음 한 번뿐인지(반복 때는 호출이 없는지) 볼 수 있습니다.
+- **웹훅(선택)**: `TOSS_WEBHOOK_ENABLED=true`로 백엔드를 다시 띄우고, 터널(예: `cloudflared tunnel --url http://localhost:8080`)의 공개 HTTPS 주소 `https://<터널>/api/payments/toss/webhook`을 개발자센터의 웹훅 설정에 `PAYMENT_STATUS_CHANGED` 이벤트로 등록하면 토스가 결제 상태 변경을 통지합니다(재시도로 같은 통지가 여러 번 올 수 있음). 터널 없이도 직접 보낼 수 있습니다.
+
+  ```bash
+  curl -s -X POST http://localhost:8080/api/payments/toss/webhook -H 'Content-Type: application/json' \
+    -d '{"eventType":"PAYMENT_STATUS_CHANGED","data":{"paymentKey":"<확정된 paymentKey>"}}'   # 200. 서버가 토스에서 재조회, 합계 그대로
+  curl -s -X POST http://localhost:8080/api/payments/toss/webhook -H 'Content-Type: application/json' \
+    -d '{"data":{"paymentKey":"forged","orderId":"<orderId>","status":"DONE","totalAmount":999999}}'   # 200이지만 아무것도 바뀌지 않음(본문을 믿지 않고 토스에 물어봄)
+  ```
+
+**5. DB 제약 직접 확인** — 같은 `order_id` 또는 `payment_key`로 두 번째 행을 넣으면 DB가 거부해야 합니다.
+
+```bash
+docker exec chzzk-postgres psql -U chzzk -d chzzk -c "INSERT INTO donation (order_id, payment_key, amount, status, donor_id, recipient_id, approved_at)
+  SELECT 'donation_manual-dup', payment_key, amount, 'CONFIRMED', donor_id, recipient_id, now() FROM donation WHERE status='CONFIRMED' LIMIT 1;"
+# ERROR: duplicate key value violates unique constraint "uq_donation_payment_key"
+```
+
+**6. 그 밖의 확인**: 로그아웃 상태 또는 자기 방송에서는 후원 폼 대신 안내가 나오는지, `curl`로 자기 방송에 주문을 만들면 400인지(`자신의 방송에는 후원할 수 없습니다.`), 남의 주문에 `confirm`/`fail`을 보내면 403인지, 라이브 방송 상세를 두 창에서 열고 후원하면 다른 창의 후원 내역이 몇 초 안에 갱신되는지 확인합니다. 자동 테스트는 `cd backend && ./gradlew test`, `cd frontend && npm test`입니다.

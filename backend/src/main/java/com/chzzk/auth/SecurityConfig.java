@@ -61,6 +61,8 @@ public class SecurityConfig {
                         .requestMatchers("/error").permitAll()
                         .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/auth/signup", "/api/auth/login").permitAll()
+                        // Toss calls the webhook without our token; the handler re-fetches the payment from Toss itself.
+                        .requestMatchers(HttpMethod.POST, "/api/payments/toss/webhook").permitAll()
                         .requestMatchers(publicRead).permitAll()
                         .requestMatchers("/ws/**").permitAll()
                         .anyRequest().authenticated())
@@ -75,13 +77,15 @@ public class SecurityConfig {
         return http.build();
     }
 
-    /** GET requests anyone may make: broadcast list/detail/video, comment list, ICE servers. */
+    /** GET requests anyone may make: broadcast list/detail/video, comment list, donation list, payment config, ICE servers. */
     private static RequestMatcher publicReadMatcher() {
         return new OrRequestMatcher(
                 PathPatternRequestMatcher.withDefaults().matcher(HttpMethod.GET, BASE),
                 PathPatternRequestMatcher.withDefaults().matcher(HttpMethod.GET, BASE + "/*"),
                 PathPatternRequestMatcher.withDefaults().matcher(HttpMethod.GET, BASE + "/*/video"),
                 PathPatternRequestMatcher.withDefaults().matcher(HttpMethod.GET, BASE + "/*/comments"),
+                PathPatternRequestMatcher.withDefaults().matcher(HttpMethod.GET, BASE + "/*/donations"),
+                PathPatternRequestMatcher.withDefaults().matcher(HttpMethod.GET, "/api/payments/config"),
                 PathPatternRequestMatcher.withDefaults().matcher(HttpMethod.GET, "/api/live/ice-servers"));
     }
 

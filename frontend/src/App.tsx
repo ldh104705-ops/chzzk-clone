@@ -3,6 +3,8 @@ import { useAuth } from './auth/AuthContext'
 import RequireAuth from './auth/RequireAuth'
 import BroadcastDetailPage from './pages/BroadcastDetailPage'
 import BroadcastListPage from './pages/BroadcastListPage'
+import DonationFailPage from './pages/DonationFailPage'
+import DonationSuccessPage from './pages/DonationSuccessPage'
 import LiveStudioPage from './pages/LiveStudioPage'
 import LoginPage from './pages/LoginPage'
 import NewLivePage from './pages/NewLivePage'
@@ -64,6 +66,9 @@ export default function App() {
           <Route path="/live/:id/studio" element={<RequireAuth><LiveStudioPage /></RequireAuth>} />
           <Route path="/recordings/new" element={<RequireAuth><NewRecordingPage /></RequireAuth>} />
           <Route path="/broadcasts/:id" element={<BroadcastDetailPage />} />
+          {/* Toss redirects here after the payment window; both need a login (the API calls need the token). */}
+          <Route path="/donations/success" element={<RequireAuth><DonationSuccessPage /></RequireAuth>} />
+          <Route path="/donations/fail" element={<RequireAuth><DonationFailPage /></RequireAuth>} />
           <Route path="*" element={<p className="state">페이지를 찾을 수 없습니다.</p>} />
         </Routes>
       </main>

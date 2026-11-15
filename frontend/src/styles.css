@@ -157,3 +157,13 @@ a:hover { text-decoration: underline; }
 }
 .link-button:hover { color: var(--accent); text-decoration: underline; }
 .muted { color: var(--muted); }
+
+/* --- Donations (step 4) --- */
+.donations { margin-top: 32px; }
+.donation-form { display: flex; flex-direction: column; gap: 10px; margin: 12px 0; max-width: 480px; }
+.donation-form input, .donation-form textarea {
+  padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); color: var(--text); font: inherit;
+}
+.donation-form .presets { display: flex; flex-wrap: wrap; gap: 8px; }
+.donation-amount { color: var(--accent); font-weight: 600; }
+.donation-result { max-width: 560px; }

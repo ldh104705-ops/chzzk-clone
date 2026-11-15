@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { deleteBroadcast, getBroadcast, resolvePlaybackUrl, updateBroadcastTitle, type Broadcast } from '../api/broadcasts'
 import { useAuth } from '../auth/AuthContext'
 import CommentSection from '../components/CommentSection'
+import DonationPanel from '../components/DonationPanel'
 import LiveViewer from '../components/LiveViewer'
 import StatusBadge from '../components/StatusBadge'
 import TypeBadge from '../components/TypeBadge'
@@ -156,6 +157,12 @@ export default function BroadcastDetailPage() {
           )}
         </dl>
       )}
+      <DonationPanel
+        broadcastId={broadcast.id}
+        ownerId={broadcast.ownerId}
+        ownerNickname={broadcast.ownerNickname}
+        live={isLive && broadcast.status !== 'ENDED'}
+      />
       <CommentSection broadcastId={broadcast.id} live={isLive && broadcast.status !== 'ENDED'} />
     </article>
   )

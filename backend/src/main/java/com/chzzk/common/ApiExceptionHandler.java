@@ -60,6 +60,16 @@ public class ApiExceptionHandler {
         return body(HttpStatus.NOT_FOUND, e.getMessage());
     }
 
+    @ExceptionHandler(ServiceUnavailableException.class)
+    ResponseEntity<ErrorBody> unavailable(ServiceUnavailableException e) {
+        return body(HttpStatus.SERVICE_UNAVAILABLE, e.getMessage());
+    }
+
+    @ExceptionHandler(BadGatewayException.class)
+    ResponseEntity<ErrorBody> badGateway(BadGatewayException e) {
+        return body(HttpStatus.BAD_GATEWAY, e.getMessage());
+    }
+
     @ExceptionHandler(Exception.class)
     ResponseEntity<ErrorBody> unexpected(Exception e) throws Exception {
         // Spring MVC's own exceptions (missing param, 405, type mismatch ...) keep their default handling.
