@@ -1,0 +1,15 @@
+services:
+  postgres:
+    image: postgres:17
+    container_name: chzzk-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-chzzk}
+      POSTGRES_USER: ${POSTGRES_USER:-chzzk}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-chzzk}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - chzzk-pgdata:/var/lib/postgresql/data
+
+volumes:
+  chzzk-pgdata:

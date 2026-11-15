@@ -1,0 +1,31 @@
+# secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+certs/
+
+# build outputs
+backend/build/
+backend/.gradle/
+backend/bin/
+backend/out/
+frontend/node_modules/
+frontend/dist/
+node_modules/
+
+# uploaded videos / runtime data
+uploads/
+backend/uploads/
+data/
+pgdata/
+
+# IDE / OS
+.idea/
+*.iml
+.vscode/
+.DS_Store
+Thumbs.db
+HELP.md
+*.tsbuildinfo
