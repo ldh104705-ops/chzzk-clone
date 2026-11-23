@@ -1,0 +1,13 @@
+# Local Kubernetes cluster (kind = Kubernetes in Docker): one node, with host port 8090 forwarded to NodePort 30080,
+# where the frontend nginx Service listens. http://localhost:8090 therefore serves the app and proxies /api and /ws
+# to the backend Service, which load-balances across all backend pods.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: chzzk
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - containerPort: 30080
+        hostPort: 8090
+        listenAddress: "127.0.0.1"
+        protocol: TCP

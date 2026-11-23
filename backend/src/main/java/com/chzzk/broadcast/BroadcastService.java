@@ -163,6 +163,28 @@ public class BroadcastService {
         return saved;
     }
 
+    /**
+     * Ends a live broadcast only if it is still READY/LIVE, with one atomic conditional UPDATE. Safe when several
+     * backend instances (grace timers, the reaper) try to end the same broadcast: exactly one gets {@code true} and
+     * publishes {@link BroadcastEndedEvent}; the others do nothing.
+     */
+    @Transactional
+    public boolean endIfStillActive(long id) {
+        int changed = repository.endIfActive(id, BroadcastType.LIVE, BroadcastStatus.ENDED,
+                List.of(BroadcastStatus.READY, BroadcastStatus.LIVE), java.time.Instant.now());
+        if (changed == 0) {
+            return false;
+        }
+        events.publishEvent(new BroadcastEndedEvent(id));
+        return true;
+    }
+
+    /** Live broadcasts that are READY or LIVE according to the database (the reaper checks them against Redis presence). */
+    @Transactional(readOnly = true)
+    public List<Broadcast> findActiveLive() {
+        return repository.findAllByTypeAndStatusIn(BroadcastType.LIVE, List.of(BroadcastStatus.READY, BroadcastStatus.LIVE));
+    }
+
     /** Live broadcasts left READY/LIVE by a previous server process can no longer have a connected broadcaster. */
     public int endOrphanedLive() {
         List<Broadcast> orphans = repository.findAllByTypeAndStatusIn(

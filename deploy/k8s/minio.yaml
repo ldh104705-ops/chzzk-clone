@@ -1,0 +1,87 @@
+# MinIO: S3-compatible object storage for uploaded videos (stand-in for Cloudflare R2). The backend creates the
+# bucket on startup (APP_STORAGE_S3_CREATE_BUCKET=true). Credentials come from the chzzk-secrets Secret.
+# Image note: MinIO stopped publishing images on Docker Hub; bitnamilegacy/minio is the last frozen build, fine for a
+# local demo (not for production - use Cloudflare R2 / S3 there).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: minio-data
+  namespace: chzzk
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  namespace: chzzk
+spec:
+  selector:
+    app: minio
+  ports:
+    - name: s3
+      port: 9000
+      targetPort: 9000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio
+  namespace: chzzk
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate # ReadWriteOnce volume: never two pods at once
+  selector:
+    matchLabels:
+      app: minio
+  template:
+    metadata:
+      labels:
+        app: minio
+    spec:
+      containers:
+        - name: minio
+          image: bitnamilegacy/minio:2025.7.23-debian-12-r5
+          ports:
+            - containerPort: 9000
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: chzzk-secrets
+                  key: MINIO_ROOT_USER
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: chzzk-secrets
+                  key: MINIO_ROOT_PASSWORD
+            - name: MINIO_DEFAULT_BUCKETS
+              value: chzzk-videos
+          readinessProbe:
+            httpGet:
+              path: /minio/health/ready
+              port: 9000
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /minio/health/live
+              port: 9000
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+          volumeMounts:
+            - name: data
+              mountPath: /bitnami/minio/data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: minio-data

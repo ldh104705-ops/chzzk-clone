@@ -1,0 +1,38 @@
+# Horizontal Pod Autoscaler: keeps the average CPU use of the backend pods near 50% of their CPU request (250m),
+# between 2 and 6 pods. Needs metrics-server (installed by deploy/scripts/up.sh).
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: backend
+  namespace: chzzk
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: backend
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 50
+  behavior:
+    scaleUp: # react fast: up to doubling (or +2 pods) every 15 s
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 15
+        - type: Pods
+          value: 2
+          periodSeconds: 15
+      selectPolicy: Max
+    scaleDown: # shrink slowly and one pod at a time; the 60 s window is short only so the demo finishes quickly
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 30

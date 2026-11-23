@@ -10,12 +10,14 @@ import java.util.Locale;
 import java.util.UUID;
 import java.util.regex.Pattern;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Component;
 
-/** Stores videos as files under {@code app.storage.dir} with random UUID names. */
+/** Stores videos as files under {@code app.storage.dir} with random UUID names ({@code app.storage.type=local}, the default). */
 @Component
+@ConditionalOnProperty(name = "app.storage.type", havingValue = "local", matchIfMissing = true)
 public class LocalVideoStorage implements VideoStorage {
 
     private static final Pattern SAFE_EXTENSION = Pattern.compile("[a-z0-9]{1,8}");

@@ -1,0 +1,142 @@
+# The Spring Boot backend: stateless, so it can run as many replicas as the HorizontalPodAutoscaler (hpa.yaml) wants.
+# All state lives outside the pods: PostgreSQL (users, broadcasts, comments, donations), Redis (logout denylist,
+# live presence + signaling relay) and MinIO (video files). The Service below is the load balancer across the pods.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: chzzk-backend-config
+  namespace: chzzk
+data:
+  APP_CLUSTER_MODE: "redis"
+  APP_STORAGE_TYPE: "s3"
+  APP_STORAGE_S3_ENDPOINT: "http://minio:9000"
+  APP_STORAGE_S3_REGION: "us-east-1"
+  APP_STORAGE_S3_BUCKET: "chzzk-videos"
+  APP_STORAGE_S3_PATH_STYLE: "true"
+  APP_STORAGE_S3_CREATE_BUCKET: "true"
+  SPRING_DATASOURCE_URL: "jdbc:postgresql://postgres:5432/chzzk"
+  SPRING_DATASOURCE_USERNAME: "chzzk"
+  SPRING_DATA_REDIS_HOST: "redis"
+  SPRING_DATA_REDIS_PORT: "6379"
+  # The browser opens http://localhost:8090 (kind port mapping), so that is the origin the API and WebSocket accept.
+  APP_CORS_ALLOWED_ORIGINS: "http://localhost:8090"
+  APP_FRONTEND_BASE_URL: "http://localhost:8090"
+  # Demo aid: every response carries "X-Instance: <pod name>".
+  APP_INSTANCE_HEADER: "true"
+  APP_READINESS_INCLUDE: "readinessState,db,redis"
+  APP_JWT_TTL: "PT12H"
+  JAVA_OPTS: "-XX:MaxRAMPercentage=75 -XX:+ExitOnOutOfMemoryError"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: chzzk
+spec:
+  # ClusterIP Service: kube-proxy spreads new connections across all READY backend pods.
+  type: ClusterIP
+  selector:
+    app: backend
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: chzzk
+spec:
+  replicas: 2 # initial value; the HPA owns the replica count afterwards (min 2, max 6)
+  selector:
+    matchLabels:
+      app: backend
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      terminationGracePeriodSeconds: 45 # > spring.lifecycle.timeout-per-shutdown-phase (25s) + preStop
+      initContainers:
+        - name: wait-for-postgres # Flyway needs the database at startup; avoids crash-restarts while Postgres boots
+          image: postgres:17
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "-c", "until pg_isready -h postgres -p 5432 -U chzzk; do echo waiting for postgres; sleep 2; done"]
+      containers:
+        - name: backend
+          image: chzzk-backend:local
+          imagePullPolicy: IfNotPresent # the image is loaded into kind with `kind load docker-image`
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: chzzk-backend-config
+          env:
+            - name: APP_JWT_SECRET # one shared secret: a token issued by one pod must verify on every other pod
+              valueFrom:
+                secretKeyRef:
+                  name: chzzk-secrets
+                  key: APP_JWT_SECRET
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: chzzk-secrets
+                  key: POSTGRES_PASSWORD
+            - name: APP_STORAGE_S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: chzzk-secrets
+                  key: MINIO_ROOT_USER
+            - name: APP_STORAGE_S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: chzzk-secrets
+                  key: MINIO_ROOT_PASSWORD
+            - name: TOSS_CLIENT_KEY # optional: donations stay disabled when absent
+              valueFrom:
+                secretKeyRef:
+                  name: chzzk-secrets
+                  key: TOSS_CLIENT_KEY
+                  optional: true
+            - name: TOSS_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: chzzk-secrets
+                  key: TOSS_SECRET_KEY
+                  optional: true
+          resources:
+            # HPA utilisation is measured against the CPU REQUEST: 50% of 250m = 125m per pod.
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          startupProbe: # JVM + Flyway + Spring start-up can take a while on one CPU
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8080
+            periodSeconds: 5
+            failureThreshold: 36
+          readinessProbe: # in the Service only while DB + Redis are reachable
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8080
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8080
+            periodSeconds: 10
+            failureThreshold: 3
+          lifecycle:
+            preStop: # let kube-proxy stop routing here before Spring starts its graceful shutdown
+              exec:
+                command: ["sleep", "5"]

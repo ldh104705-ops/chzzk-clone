@@ -26,6 +26,7 @@ import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
 /**
  * Symmetric (HS256) JWT signing. The secret comes from APP_JWT_SECRET (at least 32 bytes). If it is not set a
  * random secret is generated at startup so the server still starts, but every restart invalidates all tokens.
+ * In cluster mode ({@code app.cluster.mode=redis}) the secret is mandatory and startup fails without it.
  */
 @Configuration
 public class JwtConfig {
@@ -34,9 +35,16 @@ public class JwtConfig {
     private static final Logger log = LoggerFactory.getLogger(JwtConfig.class);
 
     @Bean
-    SecretKey jwtSecretKey(@Value("${app.jwt.secret:}") String configured) {
+    SecretKey jwtSecretKey(@Value("${app.jwt.secret:}") String configured,
+                         @Value("${app.cluster.mode:local}") String clusterMode) {
         byte[] bytes;
         if (configured == null || configured.isBlank()) {
+            if ("redis".equalsIgnoreCase(clusterMode)) {
+                // Every instance must verify tokens issued by any other instance, so they must share one secret.
+                throw new IllegalStateException("APP_JWT_SECRET must be set (32+ bytes) when APP_CLUSTER_MODE=redis: "
+                        + "a per-instance random secret would make logins fail on every other instance. "
+                        + "Generate one with: openssl rand -base64 48");
+            }
             bytes = new byte[MIN_SECRET_BYTES];
             new SecureRandom().nextBytes(bytes);
             log.warn("APP_JWT_SECRET is not set: generated a random JWT secret for this run. "

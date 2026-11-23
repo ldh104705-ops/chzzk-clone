@@ -1,0 +1,12 @@
+# kubectl apply -k deploy/k8s    (the chzzk-secrets Secret is created separately by deploy/scripts/up.sh)
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: chzzk
+resources:
+  - namespace.yaml
+  - postgres.yaml
+  - redis.yaml
+  - minio.yaml
+  - backend.yaml
+  - hpa.yaml
+  - frontend.yaml

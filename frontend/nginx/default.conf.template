@@ -1,0 +1,89 @@
+# Rendered by the nginx image at startup: envsubst replaces ${BACKEND_ADDRESS}
+# (the official image does this for every /etc/nginx/templates/*.template file).
+#
+# BACKEND_ADDRESS is host:port of the backend, e.g. backend:8080 (Docker/compose) or the Service name in
+# Kubernetes (the ClusterIP Service load-balances over all backend pods).
+
+# A WebSocket upgrade request has "Connection: upgrade"; everything else must send "close" upstream.
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+# Keep-alive pool towards the backend. Without it nginx opens a NEW TCP connection for every proxied request and, under
+# load, runs out of local ports ("connect() failed (99: Address not available)" -> 502; seen in the first load test).
+# keepalive_requests/keepalive_time recycle connections regularly: a Kubernetes Service balances per CONNECTION, so
+# connections that lived forever would never reach backend pods added later by the autoscaler.
+upstream chzzk_backend {
+    server ${BACKEND_ADDRESS};
+    keepalive 64;
+    keepalive_requests 200;
+    keepalive_time 30s;
+    keepalive_timeout 15s;
+}
+
+server {
+    listen 80;
+    server_name _;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # Uploads (videos) go through /api/broadcasts/recorded.
+    client_max_body_size 500m;
+
+    gzip on;
+    gzip_types text/plain text/css application/javascript application/json image/svg+xml;
+
+    location /api/ {
+        proxy_pass http://chzzk_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Connection ""; # required for upstream keep-alive
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $http_host;
+        # Video streaming and large uploads: do not buffer whole bodies in nginx.
+        proxy_request_buffering off;
+        proxy_buffering off;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+    }
+
+    # WebRTC signaling WebSocket. Long read timeout: viewers/broadcasters stay connected for hours.
+    location /ws/ {
+        proxy_pass http://chzzk_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $http_host;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+
+    # Cheap endpoint for Kubernetes probes (does not touch the backend).
+    location = /healthz {
+        access_log off;
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+
+    # Single-page app: unknown paths fall back to index.html so client-side routes survive a reload.
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # Hashed build assets can be cached forever; index.html must always be revalidated.
+    location /assets/ {
+        add_header Cache-Control "public, max-age=31536000, immutable";
+        try_files $uri =404;
+    }
+    location = /index.html {
+        add_header Cache-Control "no-cache";
+    }
+}

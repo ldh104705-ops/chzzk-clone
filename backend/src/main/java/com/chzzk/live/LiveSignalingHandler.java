@@ -7,8 +7,10 @@ import com.chzzk.broadcast.BroadcastStatus;
 import com.chzzk.common.ForbiddenException;
 import com.chzzk.common.NotFoundException;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -45,7 +47,9 @@ import tools.jackson.databind.ObjectMapper;
  * {viewerId, viewerCount} (to the broadcaster), relayed {@code offer} / {@code answer} / {@code ice-candidate}
  * with {@code from}, {@code broadcast-ended}, {@code error} {code, message}, {@code pong}.
  *
- * <p>Room state is in memory, so signaling assumes a single backend instance.
+ * <p>Each instance only holds its own sockets ({@link LiveRoom}). Presence (who broadcasts, who watches) and message
+ * delivery between instances go through a {@link LiveCoordinator}: in memory in local mode, Redis in cluster mode,
+ * where the broadcaster and each viewer may be connected to different backend instances.
  */
 @Component
 public class LiveSignalingHandler extends TextWebSocketHandler {
@@ -64,6 +68,8 @@ public class LiveSignalingHandler extends TextWebSocketHandler {
     private final JwtDecoder jwtDecoder;
     private final ObjectMapper mapper;
     private final long graceSeconds;
+    private final LiveCoordinator coordinator;
+    private final long heartbeatSeconds;
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "live-grace");
         t.setDaemon(true);
@@ -71,19 +77,95 @@ public class LiveSignalingHandler extends TextWebSocketHandler {
     });
 
     private final Map<String, Peer> peers = new ConcurrentHashMap<>();   // by WebSocket session id
-    private final Map<Long, LiveRoom> rooms = new ConcurrentHashMap<>(); // by broadcast id
+    private final Map<Long, LiveRoom> rooms = new ConcurrentHashMap<>(); // by broadcast id (sockets of THIS instance only)
 
     public LiveSignalingHandler(BroadcastService broadcasts, JwtDecoder jwtDecoder, ObjectMapper mapper,
-                                @Value("${app.live.broadcaster-grace-seconds:15}") long graceSeconds) {
+                                @Value("${app.live.broadcaster-grace-seconds:15}") long graceSeconds,
+                                LiveCoordinator coordinator,
+                                @Value("${app.live.heartbeat-seconds:3}") long heartbeatSeconds) {
         this.broadcasts = broadcasts;
         this.jwtDecoder = jwtDecoder;
         this.mapper = mapper;
         this.graceSeconds = graceSeconds;
+        this.coordinator = coordinator;
+        this.heartbeatSeconds = heartbeatSeconds;
+    }
+
+    @PostConstruct
+    void init() {
+        coordinator.subscribe(this::deliver);
+        scheduler.scheduleWithFixedDelay(this::heartbeat, heartbeatSeconds, heartbeatSeconds, TimeUnit.SECONDS);
     }
 
     @PreDestroy
     void shutdown() {
         scheduler.shutdownNow();
+    }
+
+    /** Keeps the shared presence of the sockets held by THIS instance alive (a dead instance's presence expires). */
+    private void heartbeat() {
+        try {
+            rooms.forEach((id, room) -> {
+                Peer broadcaster;
+                List<String> viewerIds;
+                synchronized (room) {
+                    broadcaster = room.broadcaster;
+                    viewerIds = List.copyOf(room.viewers.keySet());
+                }
+                if (broadcaster != null) {
+                    coordinator.broadcasterHeartbeat(id, broadcaster.session().getId());
+                }
+                viewerIds.forEach(viewerId -> coordinator.viewerHeartbeat(id, viewerId));
+            });
+        } catch (RuntimeException e) {
+            log.warn("Live presence heartbeat failed", e);
+        }
+    }
+
+    /** Delivers an envelope (from this or any other instance) to the sockets this instance holds. */
+    void deliver(LiveCoordinator.Envelope env) {
+        LiveRoom room = LiveCoordinator.ALL.equals(env.to()) ? rooms.remove(env.broadcastId()) : rooms.get(env.broadcastId());
+        if (room == null) {
+            return;
+        }
+        synchronized (room) {
+            switch (env.to()) {
+                case LiveCoordinator.ALL -> { // broadcast ended: tell everybody and disconnect them
+                    room.closed = true;
+                    room.cancelGrace();
+                    if (room.broadcaster != null) {
+                        room.broadcaster.send(env.payload());
+                        room.broadcaster.close(CloseStatus.NORMAL);
+                    }
+                    room.viewers.values().forEach(viewer -> {
+                        viewer.send(env.payload());
+                        viewer.close(CloseStatus.NORMAL);
+                    });
+                    room.broadcaster = null;
+                    room.viewers.clear();
+                }
+                case LiveCoordinator.REPLACE -> { // a newer broadcaster connection (maybe on another instance) took over
+                    if (room.broadcaster != null && !room.broadcaster.session().getId().equals(env.exceptToken())) {
+                        room.broadcaster.close(CloseStatus.POLICY_VIOLATION.withReason("replaced by a new broadcaster connection"));
+                    }
+                }
+                case LiveCoordinator.BROADCASTER -> {
+                    if (room.broadcaster != null) {
+                        room.broadcaster.send(env.payload());
+                    }
+                }
+                default -> {
+                    Peer viewer = room.viewers.get(env.to());
+                    if (viewer != null) {
+                        viewer.send(env.payload());
+                    }
+                }
+            }
+        }
+    }
+
+    private void toBroadcaster(long broadcastId, String payload) {
+        coordinator.send(new LiveCoordinator.Envelope(broadcastId, LiveCoordinator.BROADCASTER, payload, null));
     }
 
     // ---- WebSocket lifecycle -------------------------------------------------------------------------
@@ -135,12 +217,14 @@ public class LiveSignalingHandler extends TextWebSocketHandler {
         }
         synchronized (room) {
             if (peer.role() == Peer.Role.VIEWER) {
-                if (room.viewers.remove(peer.peerId()) != null && room.broadcaster != null) {
-                    room.broadcaster.send(json("type", "viewer-left", "viewerId", peer.peerId(),
-                            "viewerCount", room.viewers.size()));
+                if (room.viewers.remove(peer.peerId()) != null) {
+                    coordinator.viewerLeft(peer.broadcastId(), peer.peerId());
+                    toBroadcaster(peer.broadcastId(), json("type", "viewer-left", "viewerId", peer.peerId(),
+                            "viewerCount", coordinator.viewers(peer.broadcastId()).size()));
                 }
             } else if (room.broadcaster == peer) { // a replaced (older) broadcaster socket is ignored
                 room.broadcaster = null;
+                coordinator.broadcasterLeft(peer.broadcastId(), session.getId()); // no-op if a newer connection owns it
                 startGrace(peer.broadcastId(), room);
             }
         }
@@ -220,11 +304,16 @@ public class LiveSignalingHandler extends TextWebSocketHandler {
             if (previous != null && previous != peer) {
                 previous.close(CloseStatus.POLICY_VIOLATION.withReason("replaced by a new broadcaster connection"));
             }
+            String sessionToken = peer.session().getId();
+            coordinator.broadcasterJoined(id, sessionToken);
+            // A previous broadcaster connection may be held by another instance: tell all of them to drop it.
+            coordinator.send(new LiveCoordinator.Envelope(id, LiveCoordinator.REPLACE, "", sessionToken));
+            List<String> waiting = coordinator.viewers(id); // viewers on ANY instance
             peer.send(json("type", "joined", "role", "broadcaster", "peerId", BROADCASTER_ID,
-                    "viewerCount", room.viewers.size()));
+                    "viewerCount", waiting.size()));
             // Viewers that were waiting (e.g. during a reconnect) get a fresh negotiation.
-            room.viewers.keySet().forEach(viewerId -> peer.send(json("type", "viewer-joined", "viewerId", viewerId,
-                    "viewerCount", room.viewers.size())));
+            waiting.forEach(viewerId -> peer.send(json("type", "viewer-joined", "viewerId", viewerId,
+                    "viewerCount", waiting.size())));
         }
     }
 
@@ -247,12 +336,12 @@ public class LiveSignalingHandler extends TextWebSocketHandler {
             String viewerId = UUID.randomUUID().toString();
             room.viewers.put(viewerId, peer);
             peer.assign(Peer.Role.VIEWER, id, viewerId);
+            coordinator.viewerJoined(id, viewerId);
+            int viewerCount = coordinator.viewers(id).size();
             peer.send(json("type", "joined", "role", "viewer", "peerId", viewerId,
-                    "viewerCount", room.viewers.size(), "broadcasterConnected", room.broadcaster != null));
-            if (room.broadcaster != null) {
-                room.broadcaster.send(json("type", "viewer-joined", "viewerId", viewerId,
-                        "viewerCount", room.viewers.size()));
-            }
+                    "viewerCount", viewerCount, "broadcasterConnected", coordinator.broadcasterPresent(id)));
+            // Delivered by whichever instance holds the broadcaster socket (dropped if there is none).
+            toBroadcaster(id, json("type", "viewer-joined", "viewerId", viewerId, "viewerCount", viewerCount));
         }
     }
 
@@ -283,11 +372,11 @@ public class LiveSignalingHandler extends TextWebSocketHandler {
             sendError(sender, "BROADCAST_ENDED", "종료된 방송입니다.");
             return;
         }
-        Peer target;
-        synchronized (room) {
-            target = fromBroadcaster ? room.viewers.get(in.to()) : room.broadcaster;
-        }
-        if (target == null) {
+        // The target may be connected to another instance, so existence is checked in the shared presence data.
+        long broadcastId = sender.broadcastId();
+        boolean targetPresent = fromBroadcaster ? coordinator.hasViewer(broadcastId, in.to())
+                : coordinator.broadcasterPresent(broadcastId);
+        if (!targetPresent) {
             sendError(sender, fromBroadcaster ? "PEER_NOT_FOUND" : "BROADCASTER_UNAVAILABLE",
                     fromBroadcaster ? "대상 시청자를 찾을 수 없습니다." : "방송자가 연결되어 있지 않습니다.");
             return;
@@ -300,7 +389,8 @@ public class LiveSignalingHandler extends TextWebSocketHandler {
         } else {
             out.put("candidate", in.candidate());
         }
-        target.send(mapper.writeValueAsString(out));
+        coordinator.send(new LiveCoordinator.Envelope(broadcastId,
+                fromBroadcaster ? in.to() : LiveCoordinator.BROADCASTER, mapper.writeValueAsString(out), null));
     }
 
     // ---- ending --------------------------------------------------------------------------------------
@@ -317,37 +407,24 @@ public class LiveSignalingHandler extends TextWebSocketHandler {
                 if (room.broadcaster != null || room.closed) {
                     return; // reconnected in time, or already ended some other way
                 }
-                broadcasts.endBySystem(broadcastId); // publishes BroadcastEndedEvent -> onBroadcastEnded
             }
-        } catch (NotFoundException e) {
-            log.debug("Broadcast {} no longer exists; nothing to end", broadcastId);
+            if (coordinator.broadcasterPresent(broadcastId)) {
+                return; // the broadcaster reconnected through another instance
+            }
+            // Conditional UPDATE: if several instances got here, exactly one ends it and publishes BroadcastEndedEvent.
+            broadcasts.endIfStillActive(broadcastId);
         } catch (RuntimeException e) {
             log.warn("Could not end broadcast {} after the grace period", broadcastId, e);
         }
     }
 
-    /** Notifies everyone in the room and disconnects them. Fired for REST ends and grace-period ends alike. */
+    /** Tells every instance to notify and disconnect the peers of the broadcast. Fired for REST ends, grace-period ends and reaper ends alike. */
     @EventListener
     void onBroadcastEnded(BroadcastEndedEvent event) {
-        LiveRoom room = rooms.remove(event.broadcastId());
-        if (room == null) {
-            return;
-        }
-        synchronized (room) {
-            room.closed = true;
-            room.cancelGrace();
-            String message = json("type", "broadcast-ended");
-            if (room.broadcaster != null) {
-                room.broadcaster.send(message);
-                room.broadcaster.close(CloseStatus.NORMAL);
-            }
-            room.viewers.values().forEach(viewer -> {
-                viewer.send(message);
-                viewer.close(CloseStatus.NORMAL);
-            });
-            room.broadcaster = null;
-            room.viewers.clear();
-        }
+        // Published to every instance (including this one); each closes the sockets it holds (see deliver).
+        coordinator.send(new LiveCoordinator.Envelope(event.broadcastId(), LiveCoordinator.ALL,
+                json("type", "broadcast-ended"), null));
+        coordinator.clear(event.broadcastId());
     }
 
     // ---- helpers -------------------------------------------------------------------------------------

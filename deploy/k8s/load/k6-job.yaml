@@ -1,0 +1,46 @@
+# Optional: run the k6 load test INSIDE the cluster (instead of `docker run grafana/k6` on your PC).
+# The script is copied from load/k6/scale-test.js into a ConfigMap, then a Job runs it against the frontend Service
+# (which proxies to the backend Service), so the traffic takes the same path a browser's would.
+#
+#   kubectl -n chzzk create configmap k6-script --from-file=scale-test.js=load/k6/scale-test.js \
+#     --dry-run=client -o yaml | kubectl apply -f -
+#   kubectl apply -f deploy/k8s/load/k6-job.yaml
+#   kubectl -n chzzk logs -f job/k6-load
+#   kubectl -n chzzk delete job k6-load          # when finished
+#
+# Not part of kustomization.yaml on purpose: it is only started on demand.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: k6-load
+  namespace: chzzk
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: k6
+          image: grafana/k6:latest
+          args: ["run", "/scripts/scale-test.js"]
+          env:
+            - name: BASE_URL
+              value: http://frontend:80
+            - name: PEAK_VUS
+              value: "80"
+            - name: HOLD
+              value: 4m
+          resources:
+            requests:
+              cpu: 200m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+      volumes:
+        - name: script
+          configMap:
+            name: k6-script

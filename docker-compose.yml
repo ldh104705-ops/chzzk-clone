@@ -11,5 +11,32 @@ services:
     volumes:
       - chzzk-pgdata:/var/lib/postgresql/data
 
+  # ---- Step 5, optional: shared state for running the backend in cluster mode WITHOUT Kubernetes ----
+  # docker compose --profile cluster up -d      (plain `docker compose up -d` still starts only Postgres)
+  # Then start one or more backends with APP_CLUSTER_MODE=redis, APP_STORAGE_TYPE=s3 ... (see README "5단계").
+  redis:
+    image: redis:7
+    container_name: chzzk-redis
+    profiles: ["cluster"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+
+  # MinIO = S3-compatible storage for videos (stand-in for Cloudflare R2). Local-only credentials below.
+  # MinIO no longer publishes Docker Hub images; bitnamilegacy/minio is the last frozen build (fine for local use).
+  minio:
+    image: bitnamilegacy/minio:2025.7.23-debian-12-r5
+    container_name: chzzk-minio
+    profiles: ["cluster"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-chzzkminio}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-chzzkminio-secret}
+      MINIO_DEFAULT_BUCKETS: ${APP_STORAGE_S3_BUCKET:-chzzk-videos}
+    ports:
+      - "${MINIO_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - chzzk-miniodata:/bitnami/minio/data
+
 volumes:
   chzzk-pgdata:
+  chzzk-miniodata:

@@ -23,7 +23,7 @@ public class CorsConfig {
         cors.setAllowedOrigins(Arrays.stream(allowedOrigins).map(String::trim).filter(s -> !s.isEmpty()).toList());
         cors.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         cors.setAllowedHeaders(List.of("Authorization", "Content-Type", "Accept", "Range"));
-        cors.setExposedHeaders(List.of("Content-Range", "Accept-Ranges", "Content-Length"));
+        cors.setExposedHeaders(List.of("Content-Range", "Accept-Ranges", "Content-Length", "X-Instance"));
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/api/**", cors);
         return source;

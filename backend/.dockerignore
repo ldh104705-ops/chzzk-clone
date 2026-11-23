@@ -1,0 +1,11 @@
+build/
+.gradle/
+bin/
+out/
+uploads/
+.idea/
+*.iml
+.env
+.env.*
+Dockerfile
+.dockerignore

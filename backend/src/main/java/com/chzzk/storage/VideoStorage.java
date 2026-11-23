@@ -4,8 +4,9 @@ import java.io.InputStream;
 import org.springframework.core.io.Resource;
 
 /**
- * Where uploaded video bytes live. The local-disk implementation is used now; an S3/R2
- * implementation can replace it later without touching the broadcast code.
+ * Where uploaded video bytes live: local disk ({@link LocalVideoStorage}, default) or an S3-compatible bucket
+ * ({@link S3VideoStorage}: MinIO locally, Cloudflare R2 in production). Several backend instances need the S3 one,
+ * because a file on one instance's disk is invisible to the others.
  */
 public interface VideoStorage {
 
